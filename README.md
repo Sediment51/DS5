@@ -166,9 +166,28 @@ stays on the laptop.
    for WebXR), then **Start mixed reality** and allow camera access.
 
 It needs the browser to grant WebXR camera access (the same one Auto skin
-tone uses). Without it, or without the key or the laptop server (e.g. on
-GitHub Pages), the button explains why instead. Code:
-`src/lib/mentorAnalysis.ts` (client), `src/server/` (endpoint and prompt).
+tone uses). Without it, or without the key or a server (e.g. on GitHub
+Pages, which only serves files), the button explains why instead. Code:
+`src/lib/mentorAnalysis.ts` (client), `src/server/` (endpoint and prompt),
+`api/mentor.ts` (the same endpoint as a Vercel function).
+
+#### Hosting it with feedback: Vercel
+
+Vercel hosts the app and runs `/api/mentor` next to it, so one link works in
+the Quest with feedback and no laptop:
+
+1. On vercel.com, sign up with GitHub and **Add New → Project →** import this
+   repository. The settings come from `vercel.json` (Vite, `npm run build`,
+   `dist`); keep them.
+2. **Settings → Environment Variables:** add `GEMINI_API_KEY` with your key
+   (for Production, and Preview if you like). Never prefix it with `VITE_`:
+   anything starting with `VITE_` is copied into the page, where anyone can
+   read it.
+3. **Deployments → Redeploy** so it picks up the key, then open the project's
+   `….vercel.app` link in Quest Browser.
+
+Every push to `main` redeploys. The function gets up to 60 s, enough for the
+Gemini fallbacks above.
 
 A detailed sculpted hand model (`public/models/Hand.glb`) is posed on the
 headset's hand joints every frame. It was converted from the project

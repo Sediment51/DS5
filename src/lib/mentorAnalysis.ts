@@ -9,8 +9,8 @@
 export type MentorStatus = 'idle' | 'processing' | 'done' | 'error';
 
 export const MENTOR_ENDPOINT = 'api/mentor';
-/** Give up on an answer after this long (ms). */
-const TIMEOUT_MS = 30_000;
+/** Give up on an answer after this long (ms): the server may try up to three models. */
+const TIMEOUT_MS = 65_000;
 
 export const mentor = {
   status: 'idle' as MentorStatus,
@@ -44,10 +44,10 @@ export async function checkMentorService(): Promise<void> {
     const body = (await response.json().catch(() => null)) as { configured?: boolean } | null;
     if (!response.ok || !body) throw new Error(`HTTP ${response.status}`);
     mentor.available = body.configured === true;
-    mentor.reason = mentor.available ? '' : 'Mentor feedback isn’t set up: add GEMINI_API_KEY to .env.local on the laptop.';
+    mentor.reason = mentor.available ? '' : 'Mentor feedback isn’t set up: the server has no GEMINI_API_KEY yet.';
   } catch {
     mentor.available = false;
-    mentor.reason = 'Mentor feedback needs the app running from the laptop (npm run dev).';
+    mentor.reason = 'Mentor feedback isn’t available on this site: open the Vercel link, or run the app from the laptop.';
   }
   mentor.version++;
 }
@@ -69,7 +69,7 @@ export async function requestFeedback(image: string, stage: number, stageLabel: 
     else mentor.set('error', body?.error ?? `I couldn’t get feedback this time (HTTP ${response.status}).`);
   } catch (err) {
     const timedOut = err instanceof DOMException && err.name === 'AbortError';
-    mentor.set('error', timedOut ? 'That took too long. Try again in a moment.' : 'I couldn’t reach the feedback service. Is the laptop still running the app?');
+    mentor.set('error', timedOut ? 'That took too long. Try again in a moment.' : 'I couldn’t reach the feedback service. Check the headset’s internet connection.');
   } finally {
     window.clearTimeout(timer);
   }

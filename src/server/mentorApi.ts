@@ -14,14 +14,15 @@ import {
   readGeminiFeedback,
   type MentorRequest,
   type MentorService,
-} from './mentorPrompt.ts';
+} from './mentorPrompt.js';
 
 /**
- * The mentor endpoint on the dev (and preview) server: GET /api/mentor says
- * whether feedback is set up; POST /api/mentor takes { image, stage,
- * stageLabel } and returns { feedback } or { error }. The API key stays on
- * the laptop (GEMINI_API_KEY or ANTHROPIC_API_KEY in .env.local); the
- * headset only ever talks to this server.
+ * The mentor endpoint: GET /api/mentor says whether feedback is set up; POST
+ * /api/mentor takes { image, stage, stageLabel } and returns { feedback } or
+ * { error }. It runs on the laptop's dev server (key in .env.local) and as a
+ * Vercel function (api/mentor.ts, key in the project's Environment
+ * Variables). Either way the key stays on the server; the headset only ever
+ * talks to this endpoint.
  */
 
 /** The parts of Node's request and response used here (the project has no Node typings). */
@@ -32,16 +33,21 @@ interface Request {
   on(event: 'end', listener: () => void): unknown;
   on(event: 'error', listener: (err: unknown) => void): unknown;
 }
-interface Response {
+export interface ApiResponse {
   statusCode: number;
   setHeader(name: string, value: string): unknown;
   end(body?: string): unknown;
 }
+type Response = ApiResponse;
 
 /** Largest request body accepted (bytes): a photo of a few MB as base64. */
 const MAX_BODY = 8_000_000;
-/** Longest wait for the AI service (ms). */
-const API_TIMEOUT = 60_000;
+/**
+ * Longest wait for one AI call (ms): the first model gets a little longer,
+ * each fallback less, so up to three tries fit the 60 s a Vercel function gets.
+ */
+const FIRST_CALL_TIMEOUT = 22_000;
+const API_TIMEOUT = 15_000;
 
 function send(res: Response, status: number, body: object) {
   res.statusCode = status;
@@ -80,26 +86,43 @@ export function mentorMiddleware(service: MentorService | null) {
       next();
       return;
     }
-    void handle(req, res, service);
+    void answerMentor(
+      req.method,
+      async () => JSON.parse(await readBody(req, MAX_BODY)),
+      res,
+      service,
+      'add GEMINI_API_KEY to .env.local on the laptop and restart the app',
+    );
   };
 }
 
-async function handle(req: Request, res: Response, service: MentorService | null) {
-  if (req.method === 'GET') {
+/**
+ * Answers one /api/mentor request (dev server or Vercel).
+ * @param readJson reads the request's JSON body.
+ * @param setupHint how to set the key up where this runs, for the "not set up" message.
+ */
+export async function answerMentor(
+  method: string | undefined,
+  readJson: () => Promise<unknown>,
+  res: Response,
+  service: MentorService | null,
+  setupHint: string,
+) {
+  if (method === 'GET') {
     send(res, 200, { ok: true, configured: service !== null, provider: service?.provider ?? null });
     return;
   }
-  if (req.method !== 'POST') {
+  if (method !== 'POST') {
     send(res, 405, { error: 'Use GET or POST.' });
     return;
   }
   if (!service) {
-    send(res, 503, { error: 'Mentor feedback isn’t set up: add GEMINI_API_KEY to .env.local on the laptop and restart the app.' });
+    send(res, 503, { error: `Mentor feedback isn’t set up: ${setupHint}.` });
     return;
   }
   let body: unknown;
   try {
-    body = JSON.parse(await readBody(req, MAX_BODY));
+    body = await readJson();
   } catch {
     send(res, 400, { error: 'The photo couldn’t be read. Try again.' });
     return;
@@ -116,7 +139,7 @@ async function handle(req: Request, res: Response, service: MentorService | null
     console.error(`[mentor] Request to ${service.provider} failed`, err);
     const timedOut = err instanceof DOMException && err.name === 'TimeoutError';
     send(res, 504, {
-      error: timedOut ? 'The AI service took too long. Try again.' : 'The laptop couldn’t reach the AI service. Check its internet connection.',
+      error: timedOut ? 'The AI service took too long. Try again.' : 'The server couldn’t reach the AI service. Try again in a moment.',
     });
   }
 }
@@ -128,29 +151,36 @@ type Answer = { feedback: string } | { error: string };
  * never logged). If the model is overloaded, asks the fallback models in turn.
  */
 async function askGemini(service: MentorService, req: MentorRequest): Promise<Answer> {
-  const call = async (model: string) => {
-    const response = await fetch(`${geminiUrl(model)}?key=${encodeURIComponent(service.apiKey)}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(buildGeminiRequest(req)),
-      signal: AbortSignal.timeout(API_TIMEOUT),
-    });
-    const json: unknown = await response.json().catch(() => null);
-    if (!response.ok) console.error(`[mentor] Gemini error ${response.status} (model ${model})`, json);
-    return { response, json };
+  /** One call; a model too slow to answer in time counts as busy (status 503). */
+  const call = async (model: string, timeout: number) => {
+    try {
+      const response = await fetch(`${geminiUrl(model)}?key=${encodeURIComponent(service.apiKey)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(buildGeminiRequest(req)),
+        signal: AbortSignal.timeout(timeout),
+      });
+      const json: unknown = await response.json().catch(() => null);
+      if (!response.ok) console.error(`[mentor] Gemini error ${response.status} (model ${model})`, json);
+      return { status: response.status, ok: response.ok, json };
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === 'TimeoutError')) throw err;
+      console.warn(`[mentor] ${model} didn’t answer within ${timeout / 1000} s`);
+      return { status: 503, ok: false, json: null as unknown };
+    }
   };
   let model = service.model;
-  let { response, json } = await call(model);
+  let reply = await call(model, FIRST_CALL_TIMEOUT);
   for (const fallback of GEMINI_FALLBACK_MODELS) {
-    if (response.ok || !geminiOverloaded(response.status)) break;
+    if (reply.ok || !geminiOverloaded(reply.status)) break;
     if (fallback === service.model) continue;
     console.warn(`[mentor] ${model} is busy; trying ${fallback}`);
     model = fallback;
-    ({ response, json } = await call(model));
+    reply = await call(model, API_TIMEOUT);
   }
-  if (!response.ok) return { error: describeGeminiError(response.status, json) };
-  const result = readGeminiFeedback(json);
-  if ('error' in result) console.warn('[mentor] Gemini gave no feedback', json);
+  if (!reply.ok) return { error: describeGeminiError(reply.status, reply.json) };
+  const result = readGeminiFeedback(reply.json);
+  if ('error' in result) console.warn('[mentor] Gemini gave no feedback', reply.json);
   return result;
 }
 
