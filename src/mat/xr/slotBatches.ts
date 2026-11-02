@@ -39,16 +39,17 @@ const footprintVertex = /* glsl */ `
   attribute float aSlot;
   attribute float aKind;
   uniform float uAlpha[${MAX_SLOTS}];
-  uniform float uActive;
+  uniform float uLit[${MAX_SLOTS}];
   uniform float uTime;
   varying float vAlpha;
   void main() {
-    float alpha = uAlpha[int(aSlot + 0.5)];
-    bool current = abs(aSlot - uActive) < 0.5; // ('active' is reserved in GLSL)
+    int slot = int(aSlot + 0.5);
+    float alpha = uAlpha[slot];
+    bool current = uLit[slot] > 0.5; // selected, the current step, or used in this build stage
     float kind;
     if (aKind < 0.5) kind = current ? 0.0 : 0.9;          // dashed: the normal outline
-    else if (aKind < 1.5) kind = current ? 1.0 : 0.0;     // solid: the current step's outline
-    else kind = current ? 0.12 + 0.05 * sin(uTime * 4.0) : 0.07; // fill, pulsing for the current step
+    else if (aKind < 1.5) kind = current ? 1.0 : 0.0;     // solid: a highlighted item's outline
+    else kind = current ? 0.14 + 0.04 * sin(uTime * 3.0) : 0.05; // fill: still, gently pulsing only when highlighted
     vAlpha = alpha * kind;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
@@ -69,13 +70,14 @@ export class FootprintBatch {
   readonly mesh: THREE.Mesh;
   private readonly material: THREE.ShaderMaterial;
   private readonly alphas = new Float32Array(MAX_SLOTS);
+  private readonly lit = new Float32Array(MAX_SLOTS);
 
   constructor() {
     this.material = new THREE.ShaderMaterial({
       uniforms: {
         uColor: { value: new THREE.Color(COLORS.mint) },
         uAlpha: { value: this.alphas },
-        uActive: { value: -1 },
+        uLit: { value: this.lit },
         uTime: { value: 0 },
       },
       vertexShader: footprintVertex,
@@ -128,9 +130,13 @@ export class FootprintBatch {
     this.alphas[slot] = alpha;
   }
 
-  /** The current step (-1 for none). */
-  setActive(slot: number) {
-    this.material.uniforms.uActive.value = slot;
+  /** Highlights a slot (solid outline, a soft fill) or not. */
+  setLit(slot: number, lit: boolean) {
+    this.lit[slot] = lit ? 1 : 0;
+  }
+
+  setColor(color: string) {
+    (this.material.uniforms.uColor.value as THREE.Color).set(color);
   }
 
   setTime(seconds: number) {
@@ -151,20 +157,21 @@ const badgeVertex = /* glsl */ `
 export class BadgeBatch {
   readonly mesh: THREE.InstancedMesh;
   private readonly alpha: THREE.InstancedBufferAttribute;
+  private readonly material: THREE.ShaderMaterial;
 
   constructor(radius: number, count: number) {
     const geometry = new THREE.CircleGeometry(radius, 28);
     this.alpha = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
     this.alpha.setUsage(THREE.DynamicDrawUsage);
     geometry.setAttribute('aAlpha', this.alpha);
-    const material = new THREE.ShaderMaterial({
+    const material = (this.material = new THREE.ShaderMaterial({
       uniforms: { uColor: { value: new THREE.Color(COLORS.mint) } },
       vertexShader: badgeVertex,
       fragmentShader: flatFragment,
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
-    });
+    }));
     this.mesh = new THREE.InstancedMesh(geometry, material, count);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
@@ -180,6 +187,10 @@ export class BadgeBatch {
     if (this.alpha.getX(slot) === alpha) return;
     this.alpha.setX(slot, alpha);
     this.alpha.needsUpdate = true;
+  }
+
+  setColor(color: string) {
+    (this.material.uniforms.uColor.value as THREE.Color).set(color);
   }
 
   dispose() {

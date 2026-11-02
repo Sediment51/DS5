@@ -23,6 +23,34 @@ export function fistRatio(wrist: THREE.Vector3, knuckle: THREE.Vector3, tips: re
   return farthest / palm;
 }
 
+/** Pointing: the index fingertip at least this far from the middle of the palm (palm lengths)… */
+export const POINT_INDEX_OUT = 1.0;
+/** …while the other three fingertips are curled in within this. */
+export const POINT_OTHERS_IN = 0.85;
+
+/**
+ * Whether the hand is pointing: index finger out, middle, ring and pinky
+ * curled. An open hand passing by (every finger out) or a fist (every finger
+ * in) doesn't count, so only a deliberate point drives the opacity slider.
+ * @param others the middle, ring and pinky tips.
+ */
+export function isPointing(
+  wrist: THREE.Vector3,
+  knuckle: THREE.Vector3,
+  indexTip: THREE.Vector3,
+  others: readonly THREE.Vector3[],
+): boolean {
+  const palm = wrist.distanceTo(knuckle);
+  if (palm < 1e-4) return false;
+  const cx = (wrist.x + knuckle.x) / 2;
+  const cy = (wrist.y + knuckle.y) / 2;
+  const cz = (wrist.z + knuckle.z) / 2;
+  const reach = (t: THREE.Vector3) => Math.hypot(t.x - cx, t.y - cy, t.z - cz) / palm;
+  if (reach(indexTip) < POINT_INDEX_OUT) return false;
+  for (let i = 0; i < others.length; i++) if (reach(others[i]) > POINT_OTHERS_IN) return false;
+  return true;
+}
+
 /** Below this the hand counts as a fist… */
 export const FIST_CLOSE = 0.6;
 /** …and above this it's open again (hysteresis against flicker). */

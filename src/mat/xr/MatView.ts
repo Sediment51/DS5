@@ -13,8 +13,10 @@ const LINE_LIFT = 0.0015;
 /** Strength of the other slots in step mode. */
 const STEP_DIM = 0.2;
 
+/** How long the edge pulses when the mat is placed (s). */
+const PULSE_SECONDS = 1.2;
+
 const matInverse = new THREE.Matrix4();
-const MINT = new THREE.Color(COLORS.mint);
 const WHITE = new THREE.Color('#ffffff');
 const badgeMatrix = new THREE.Matrix4();
 
@@ -55,9 +57,15 @@ export class MatView {
     toneMapped: false,
   });
   private opacity = 1;
-  /** Index of the highlighted item in step mode, or -1. */
-  private activeStep = -1;
+  /** Highlighted items (selected, the current step, or used in this build stage). */
+  private readonly lit = new Set<number>();
+  /** Step mode: everything but the highlighted items is dimmed. */
+  private dimOthers = false;
   private grabState: GrabState = 'none';
+  private accent = new THREE.Color(COLORS.mint);
+  private labelsShown = true;
+  /** Seconds left of the "placed" pulse of the edge. */
+  private pulseFor = 0;
 
   constructor() {
     this.root.matrixAutoUpdate = false;
@@ -91,6 +99,7 @@ export class MatView {
     }
     this.slots = kit.items.map((item) => new SlotView(item));
     this.badges = new BadgeBatch(BADGE_RADIUS, this.slots.length);
+    this.badges.setColor(`#${this.accent.getHexString()}`);
     this.labels = new BatchedText();
     this.labels.material = textMaterial();
     this.labels.renderOrder = 20;
@@ -99,6 +108,8 @@ export class MatView {
       for (const text of slot.texts) this.labels.addText(text);
     }
     this.overlay.add(this.badges.mesh, this.labels);
+    this.setLabelsVisible(this.labelsShown);
+    this.lit.clear();
   }
 
   /** Sizes the mat to width × depth (m) and lays the kit out on it. */
@@ -123,7 +134,8 @@ export class MatView {
     layout.slots.forEach((slot, i) => this.slots[i].place(slot));
     this.footprints.build(this.slots.map((s) => ({ shape: s.item.footprint, x: s.footprintX, z: s.footprintZ })));
     this.pages = layout.pages;
-    this.activeStep = -1;
+    this.lit.clear();
+    this.dimOthers = false;
     this.setPage(0);
   }
 
@@ -132,11 +144,47 @@ export class MatView {
     this.applySlots();
   }
 
-  /** Highlights one item (step mode) or none (-1). */
-  setActiveStep(item: number) {
-    this.activeStep = item;
-    if (item >= 0) this.page = this.pageOf(item);
+  /**
+   * Highlights these items (none: an empty list) and, in step mode, dims the
+   * rest. The page turns to the first highlighted item if it's elsewhere.
+   */
+  setHighlight(items: readonly number[], dimOthers: boolean) {
+    this.lit.clear();
+    for (const i of items) if (i >= 0 && i < this.slots.length) this.lit.add(i);
+    this.dimOthers = dimOthers && this.lit.size > 0;
+    const first = items.find((i) => this.lit.has(i));
+    if (first !== undefined && ![...this.lit].some((i) => this.pageOf(i) === this.page)) this.page = this.pageOf(first);
     this.applySlots();
+  }
+
+  /** The item whose cell (outline and label) contains this mat-space point, on the page in view; -1 if none. */
+  hitSlot(x: number, z: number): number {
+    for (let i = 0; i < this.slots.length; i++) {
+      const s = this.slots[i];
+      if (s.page !== this.page) continue;
+      if (Math.abs(x - s.cellX) <= s.cellWidth / 2 && Math.abs(z - s.cellZ) <= s.cellDepth / 2) return i;
+    }
+    return -1;
+  }
+
+  /** The mat's accent colour: edge, corner ticks, outlines and badges. */
+  setAccent(color: string) {
+    this.accent.set(color);
+    this.footprints.setColor(color);
+    this.badges?.setColor(color);
+    this.applyEdge();
+  }
+
+  /** Shows or hides the material names and step badges (the outlines stay). */
+  setLabelsVisible(visible: boolean) {
+    this.labelsShown = visible;
+    if (this.labels) this.labels.visible = visible;
+    if (this.badges) this.badges.mesh.visible = visible;
+  }
+
+  /** One soft pulse of the edge: "placed". */
+  pulse() {
+    this.pulseFor = PULSE_SECONDS;
   }
 
   /** Places the mat at a centre on the table, turned by yaw about +Y. */
@@ -172,22 +220,27 @@ export class MatView {
 
   private applyEdge() {
     const handled = this.grabState !== 'none';
-    const color = this.grabState === 'held' ? WHITE : MINT;
+    const color = this.grabState === 'held' ? WHITE : this.accent;
     this.outlineMaterial.color.copy(color);
     this.tickMaterial.color.copy(color);
-    this.outlineMaterial.opacity = (handled ? 1 : 0.55) * this.opacity;
+    const pulse = this.pulseFor > 0 ? Math.sin((this.pulseFor / PULSE_SECONDS) * Math.PI) : 0;
+    this.outlineMaterial.opacity = Math.min((handled ? 1 : 0.55) + 0.45 * pulse, 1) * this.opacity;
     this.tickMaterial.opacity = this.opacity;
   }
 
-  /** Per frame: labels face the user; the active step pulses. */
-  update(head: THREE.Vector3, time: number) {
+  /** Per frame: label and badge poses; the highlighted items' fill and the placed pulse. */
+  update(dt: number, time: number) {
+    if (this.pulseFor > 0) {
+      this.pulseFor = Math.max(this.pulseFor - dt, 0);
+      this.applyEdge();
+    }
     if (!this.root.visible || !this.overlay.visible || !this.badges) return;
     this.root.updateMatrixWorld(true);
     matInverse.copy(this.overlay.matrixWorld).invert();
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i];
       if (slot.alpha <= 0.002) continue;
-      slot.faceTowards(head, matInverse, badgeMatrix);
+      slot.pose(matInverse, badgeMatrix);
       this.badges.setMatrix(i, badgeMatrix);
     }
     this.footprints.setTime(time);
@@ -195,16 +248,15 @@ export class MatView {
 
   private applySlots() {
     // Runs every frame while the opacity eases: a plain loop, no closures.
-    const stepping = this.activeStep >= 0;
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i];
       const onPage = slot.page === this.page;
-      const active = stepping && i === this.activeStep;
-      const alpha = onPage ? this.opacity * (stepping && !active ? STEP_DIM : 1) : 0;
-      slot.setState(alpha, active);
+      const lit = this.lit.has(i);
+      const alpha = onPage ? this.opacity * (this.dimOthers && !lit ? STEP_DIM : 1) : 0;
+      slot.setState(alpha, lit);
       this.footprints.setAlpha(i, alpha);
+      this.footprints.setLit(i, lit);
       this.badges?.setAlpha(i, alpha);
     }
-    this.footprints.setActive(stepping ? this.activeStep : -1);
   }
 }

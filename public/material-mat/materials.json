@@ -3,112 +3,94 @@
   "title": "5 cm scar-wax cut on the palm",
   "items": [
     {
-      "id": "alcohol",
+      "id": "cotton-pads",
       "step": 1,
-      "name": "Isopropyl alcohol 99% + cotton pad",
-      "purpose": "Clean the palm",
-      "quantity": "1 pad, lightly wet",
-      "footprint": { "shape": "rect", "width": 12, "depth": 7 }
-    },
-    {
-      "id": "spirit-gum",
-      "step": 2,
-      "name": "Spirit gum",
-      "purpose": "Adhesive",
-      "quantity": "Thin line, slightly wider than the cut",
-      "footprint": { "shape": "circle", "diameter": 4 }
-    },
-    {
-      "id": "cotton",
-      "step": 3,
-      "name": "Cotton fibres (optional)",
-      "purpose": "Anchor the wax",
-      "quantity": "A small pinch",
-      "footprint": { "shape": "circle", "diameter": 5 }
-    },
-    {
-      "id": "wax",
-      "step": 4,
-      "name": "Nose & scar wax",
-      "purpose": "Build the cut",
-      "quantity": "Marble-sized ball (~2–3 g)",
+      "group": "Prep",
+      "name": "Cotton pads",
+      "purpose": "Clean the skin before you start",
+      "quantity": "1–2 pads",
       "footprint": { "shape": "circle", "diameter": 6 },
-      "quantityVisual": { "type": "sphere", "diameter": 1.6, "color": "#e8c8ad" }
+      "stages": [1]
     },
     {
-      "id": "vaseline",
-      "step": 5,
-      "name": "Vaseline",
-      "purpose": "Keep wax off fingers and tools",
+      "id": "petroleum-jelly",
+      "step": 2,
+      "group": "Prep",
+      "name": "Petroleum jelly",
+      "purpose": "Keeps wax off your fingers and tools",
       "quantity": "A fingertip dab",
-      "footprint": { "shape": "circle", "diameter": 5.5 }
+      "footprint": { "shape": "circle", "diameter": 6 },
+      "stages": [2, 3]
     },
     {
-      "id": "spatula",
-      "step": 6,
-      "name": "Metal spatula / modelling tool",
-      "purpose": "Smooth and slice",
+      "id": "scar-wax",
+      "step": 3,
+      "group": "Build",
+      "name": "Scar wax",
+      "purpose": "Builds the raised wound",
+      "quantity": "Marble-sized ball",
+      "footprint": { "shape": "circle", "diameter": 7 },
+      "stages": [2, 3]
+    },
+    {
+      "id": "sculpting-tool",
+      "step": 4,
+      "group": "Build",
+      "name": "Metal sculpting tool / scalpel",
+      "purpose": "Blends the edges and slices the cut",
       "quantity": "1",
-      "footprint": { "shape": "pill", "length": 15, "width": 2 }
+      "footprint": { "shape": "pill", "length": 16, "width": 1.6 },
+      "stages": [2, 3]
     },
     {
-      "id": "sealer",
+      "id": "colour-palette",
+      "step": 5,
+      "group": "Colour",
+      "name": "Colour palette",
+      "purpose": "Matches the wax to your skin",
+      "quantity": "2–3 skin shades",
+      "footprint": { "shape": "rect", "width": 12, "depth": 8 },
+      "stages": [4]
+    },
+    {
+      "id": "eyeshadow-palette",
+      "step": 6,
+      "group": "Colour",
+      "name": "Liquid eyeshadow (red + black)",
+      "purpose": "Red inside the cut, black for depth",
+      "quantity": "A little of each",
+      "footprint": { "shape": "rect", "width": 10, "depth": 6 },
+      "stages": [4, 6]
+    },
+    {
+      "id": "wide-brush",
       "step": 7,
-      "name": "Liquid latex + face powder (+ castor sealer)",
-      "purpose": "Seal the wax",
-      "quantity": "1 thin coat + light dusting",
-      "footprint": { "shape": "rect", "width": 15, "depth": 6 }
+      "group": "Colour",
+      "name": "Wide brush",
+      "purpose": "Blends colour over the wax",
+      "quantity": "1",
+      "footprint": { "shape": "pill", "length": 18, "width": 2.2 },
+      "stages": [4]
     },
     {
-      "id": "foundation",
+      "id": "slim-brush",
       "step": 8,
-      "name": "Foundation / concealer",
-      "purpose": "Blend into skin",
-      "quantity": "Pea-sized amount",
-      "footprint": { "shape": "pill", "length": 10, "width": 3 },
-      "quantityVisual": { "type": "sphere", "diameter": 0.8, "color": "#c99a78" }
+      "group": "Colour",
+      "name": "Slim brush",
+      "purpose": "Paints detail into the cut",
+      "quantity": "1",
+      "footprint": { "shape": "pill", "length": 17, "width": 1.2 },
+      "stages": [4, 6]
     },
     {
-      "id": "cream-wheel",
+      "id": "fake-blood",
       "step": 9,
-      "name": "Cuts & bruises cream wheel",
-      "purpose": "Colour the cut and bruise",
-      "quantity": "Small amounts of 3–4 shades",
-      "footprint": { "shape": "circle", "diameter": 7 }
-    },
-    {
-      "id": "sponge-brush",
-      "step": 10,
-      "name": "Stipple sponge + fine brush",
-      "purpose": "Texture and detail",
-      "quantity": "1 small piece + 1 brush",
-      "footprint": { "shape": "rect", "width": 17, "depth": 5 }
-    },
-    {
-      "id": "thick-blood",
-      "step": 11,
-      "name": "Thick blood",
-      "purpose": "Fill the cut",
-      "quantity": "About ½ teaspoon (2.5 ml)",
+      "group": "Finish",
+      "name": "Fake blood",
+      "purpose": "Fills the cut and adds drips",
+      "quantity": "About ½ teaspoon",
       "footprint": { "shape": "circle", "diameter": 4.5 },
-      "quantityVisual": { "type": "blob", "volumeMl": 2.5, "color": "#6d0a10" }
-    },
-    {
-      "id": "stage-blood",
-      "step": 12,
-      "name": "Liquid stage blood",
-      "purpose": "Drips",
-      "quantity": "2–3 drops",
-      "footprint": { "shape": "circle", "diameter": 4.5 },
-      "quantityVisual": { "type": "drops", "count": 3, "color": "#9c1016" }
-    },
-    {
-      "id": "remover",
-      "step": 13,
-      "name": "Spirit gum remover",
-      "purpose": "Clean-up",
-      "quantity": "As needed",
-      "footprint": { "shape": "circle", "diameter": 4.5 }
+      "stages": [5]
     }
   ]
 }

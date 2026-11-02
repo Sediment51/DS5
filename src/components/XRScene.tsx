@@ -1,20 +1,19 @@
 import { memo, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { GrabSystem, PANEL_GRAB_TINT, type GrabState } from '../lib/grab';
+import { GrabSystem } from '../lib/grab';
 import { createHandPose, type HandPose } from '../lib/handPose';
+import { checkMentorService } from '../lib/mentorAnalysis';
+import { workspace } from '../lib/workspaceFlow';
 import { GrabController } from './GrabController';
 import type { Kit } from '../mat/lib/kit';
 import { MaterialMat } from '../mat/MaterialMat';
 import type { MatSystem } from '../mat/xr/MatSystem';
-import { FingerCursor } from '../lib/fingerCursor';
-import { HEADSET_SLIDER, SliderGrip, type SliderGripState } from '../lib/pokeSlider';
-import { uiSound } from '../lib/uiSound';
 import type { HandStatus } from './Hud';
+import { XRMenus } from './XRMenus';
 import { XRPoseSource } from './XRPoseSource';
 import { XRBuddy } from './XRBuddy';
 import { XRWound } from './XRWound';
-import { XRWoundPanel } from './XRWoundPanel';
 
 export type XRMode = 'ar' | 'vr';
 
@@ -27,7 +26,7 @@ interface XRSceneProps {
   onHandStatus: (status: HandStatus) => void;
   /** Wound opacity 0..1, shared with the page's slider. */
   woundOpacity: RefObject<number>;
-  /** Called when the in-headset slider changes the opacity. */
+  /** Called when the in-headset Opacity panel changes the wound's opacity. */
   onWoundOpacityChange: (value: number) => void;
   /** The material mat's kit (mixed reality only), or null if it didn't load. */
   kit: Kit | null;
@@ -35,9 +34,11 @@ interface XRSceneProps {
 }
 
 /**
- * The headset scene: the wound on the user's palm driven by the headset's
- * hand tracking. In VR it adds virtual hands and a simple room; in mixed
- * reality the real room and hands show through passthrough.
+ * The headset scene: a workspace introduced step by step (see
+ * workspaceFlow.ts): first the material mat, then Buddy, then the menus,
+ * and the wound on the user's palm only while they work. In VR it adds
+ * virtual hands and a simple room; in mixed reality the real room and hands
+ * show through passthrough.
  */
 export const XRScene = memo(function XRScene({
   mode,
@@ -50,9 +51,11 @@ export const XRScene = memo(function XRScene({
   onMatSystem,
 }: XRSceneProps) {
   const pose = useRef<HandPose>(createHandPose());
-  // Panels and the material mat can be carried with a fist.
+  // Panels, Buddy and the material mat can be carried with a fist.
   const grab = useMemo(() => new GrabSystem(), []);
   const isVR = mode !== 'ar';
+  // Mixed reality with a kit starts by setting up the mat; otherwise there's no mat.
+  const withMat = mode === 'ar' && kit !== null;
 
   return (
     <Canvas
@@ -66,14 +69,13 @@ export const XRScene = memo(function XRScene({
       {isVR && <VRRoom floorY={floorY} />}
       <hemisphereLight args={['#ffffff', '#c9cfc7', 0.8]} />
       <directionalLight position={[0.6, 2.2, 0.8]} intensity={1} />
+      <FlowDriver mode={mode} withMat={withMat} />
       <XRPoseSource pose={pose} showHands={isVR} />
       <XRWound strength={woundOpacity} />
-      <XRBuddy active={mode !== null} />
-      <XRWoundPanel active={mode !== null} grab={grab} />
-      <HintPanel pose={pose} active={mode !== null} />
-      <HeadsetSlider value={woundOpacity} active={mode !== null} onChange={onWoundOpacityChange} grab={grab} />
+      <XRBuddy active={mode !== null} grab={grab} />
+      <XRMenus grab={grab} woundOpacity={woundOpacity} onWoundOpacityChange={onWoundOpacityChange} />
       <StatusReporter pose={pose} onHandStatus={onHandStatus} />
-      <MaterialMat active={mode === 'ar'} kit={kit} onSystem={onMatSystem} grab={grab} />
+      <MaterialMat active={withMat} kit={kit} onSystem={onMatSystem} grab={grab} />
       <GrabController grab={grab} active={mode !== null} />
     </Canvas>
   );
@@ -112,305 +114,48 @@ function VRRoom({ floorY }: { floorY: number }) {
   );
 }
 
-const HINT_NO_HAND = 'Hold up your palm';
-
-/** A small panel floating in front of the user while no open hand is tracked. */
-function HintPanel({ pose, active }: { pose: RefObject<HandPose>; active: boolean }) {
-  const gl = useThree((s) => s.gl);
-  const meshRef = useRef<THREE.Mesh>(null);
-  const { canvas, texture, material } = useMemo(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1024;
-    canvas.height = 192;
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, toneMapped: false });
-    return { canvas, texture, material };
-  }, []);
-  const scratch = useMemo(
-    () => ({ shown: '' as string, head: new THREE.Vector3(), forward: new THREE.Vector3(), target: new THREE.Vector3(), placed: false }),
-    [],
-  );
-
-  useEffect(
-    () => () => {
-      texture.dispose();
-      material.dispose();
-    },
-    [texture, material],
-  );
-
-  useFrame(() => {
-    const mesh = meshRef.current;
-    const hand = pose.current;
-    if (!mesh || !hand) return;
-    // Only while the chosen hand isn't tracked (the wound never waits for an open hand).
-    const hint = !active ? '' : !hand.tracked ? HINT_NO_HAND : '';
-    mesh.visible = hint !== '';
-    if (!hint) {
-      scratch.placed = false;
-      return;
-    }
-    if (hint !== scratch.shown) {
-      scratch.shown = hint;
-      drawHint(canvas, hint);
-      texture.needsUpdate = true;
-    }
-
-    // Float about 80 cm ahead of the head, easing after it as the user turns.
-    const head = gl.xr.getCamera();
-    head.getWorldPosition(scratch.head);
-    head.getWorldDirection(scratch.forward);
-    scratch.forward.y = 0;
-    scratch.forward.normalize();
-    scratch.target.copy(scratch.head).addScaledVector(scratch.forward, 0.8);
-    scratch.target.y -= 0.12;
-    if (!scratch.placed) mesh.position.copy(scratch.target);
-    else mesh.position.lerp(scratch.target, 0.06);
-    scratch.placed = true;
-    mesh.lookAt(scratch.head);
-  });
-
-  return (
-    <mesh ref={meshRef} material={material} visible={false}>
-      <planeGeometry args={[0.4, 0.075]} />
-    </mesh>
-  );
-}
-
-function drawHint(canvas: HTMLCanvasElement, text: string) {
-  const ctx = canvas.getContext('2d')!;
-  const { width: w, height: h } = canvas;
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = 'rgba(251, 250, 247, 0.94)';
-  ctx.beginPath();
-  ctx.roundRect(4, 4, w - 8, h - 8, h / 2 - 4);
-  ctx.fill();
-  ctx.fillStyle = '#1f2a24';
-  ctx.font = '600 76px "DM Sans", system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, w / 2, h / 2 + 4);
-}
+/** Without a mat, the workspace is a fixed spot this far ahead of the eyes and this far below them (m). */
+const NO_MAT_AHEAD = 0.5;
+const NO_MAT_BELOW = 0.45;
+const NO_MAT_SIZE = { width: 0.5, depth: 0.35 };
 
 /**
- * The wound-opacity slider inside the headset: a small panel placed below
- * and to the left of where the user looks when the session starts. Press
- * and slide along it with either index fingertip.
+ * Starts the workspace flow when a session starts (with the mat setup, or
+ * straight to the intro without a mat), places the fixed workspace when
+ * there's no mat, and checks whether mentor feedback is available.
  */
-function HeadsetSlider({
-  value,
-  active,
-  onChange,
-  grab,
-}: {
-  value: RefObject<number>;
-  active: boolean;
-  onChange: (value: number) => void;
-  grab: GrabSystem;
-}) {
+function FlowDriver({ mode, withMat }: { mode: XRMode | null; withMat: boolean }) {
   const gl = useThree((s) => s.gl);
-  const meshRef = useRef<THREE.Mesh>(null);
-  const { canvas, texture, material } = useMemo(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 800;
-    canvas.height = 220;
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, toneMapped: false });
-    return { canvas, texture, material };
-  }, []);
-  const scratch = useMemo(
-    () => ({
-      placed: false,
-      drawn: -1,
-      sent: -1,
-      head: new THREE.Vector3(),
-      forward: new THREE.Vector3(),
-      right: new THREE.Vector3(),
-      tip: new THREE.Vector3(),
-      active: false,
-      held: false,
-      grip: new SliderGrip(),
-      owner: -1,
-      cursor: new FingerCursor(),
-    }),
-    [],
-  );
-  scratch.active = active;
-  useEffect(() => () => scratch.cursor.dispose(), [scratch]);
+  const s = useMemo(() => ({ needsFrame: false, head: new THREE.Vector3(), forward: new THREE.Vector3(), frame: new THREE.Matrix4() }), []);
 
-  // Carry it with a fist: it follows, turns to face you, and stays where you let go.
-  useEffect(
-    () =>
-      grab.add({
-        bounds: new THREE.Box3(
-          new THREE.Vector3(-HEADSET_SLIDER.width / 2, -HEADSET_SLIDER.height / 2, -0.03),
-          new THREE.Vector3(HEADSET_SLIDER.width / 2, HEADSET_SLIDER.height / 2, 0.03),
-        ),
-        style: 'panel',
-        canGrab: () => scratch.active && scratch.placed && !!meshRef.current?.visible,
-        worldMatrix: (out) => {
-          const mesh = meshRef.current!;
-          mesh.updateWorldMatrix(true, false);
-          out.copy(mesh.matrixWorld);
-        },
-        begin: () => {
-          scratch.held = true;
-        },
-        move: (world) => {
-          const mesh = meshRef.current!;
-          world.decompose(mesh.position, mesh.quaternion, mesh.scale);
-        },
-        end: () => {
-          scratch.held = false;
-        },
-        setGrabState: (state: GrabState) => material.color.copy(PANEL_GRAB_TINT[state]),
-      }),
-    [grab, material, scratch],
-  );
-
-  useEffect(
-    () => () => {
-      texture.dispose();
-      material.dispose();
-    },
-    [texture, material],
-  );
+  useEffect(() => {
+    workspace.reset();
+    workspace.flow.start(withMat);
+    s.needsFrame = mode !== null && !withMat;
+    if (mode !== null) void checkMentorService();
+  }, [mode, withMat, s]);
 
   useFrame((_, delta) => {
-    const mesh = meshRef.current;
-    const opacity = value.current;
-    if (!mesh || opacity === null) return;
-    mesh.visible = active;
-    if (!active) {
-      scratch.placed = false;
-      return;
-    }
-
-    if (!scratch.placed) {
-      const head = gl.xr.getCamera();
-      head.getWorldPosition(scratch.head);
-      if (scratch.head.lengthSq() === 0) return; // no head pose yet
-      head.getWorldDirection(scratch.forward);
-      scratch.forward.y = 0;
-      scratch.forward.normalize();
-      scratch.right.set(-scratch.forward.z, 0, scratch.forward.x);
-      mesh.position
-        .copy(scratch.head)
-        .addScaledVector(scratch.forward, 0.42)
-        .addScaledVector(scratch.right, -0.17);
-      mesh.position.y -= 0.22;
-      mesh.lookAt(scratch.head);
-      mesh.updateMatrixWorld();
-      scratch.placed = true;
-    }
-
-    // The nearest index fingertip (once grabbed, only that hand's) slides it; not while the panel is carried.
-    let found = false;
-    let fx = 0, fy = 0, fz = Infinity;
-    for (let i = 0; i < 2 && !scratch.held; i++) {
-      if (scratch.grip.state === 'held' && scratch.owner !== i) continue;
-      const tip = gl.xr.getHand(i).joints['index-finger-tip'];
-      if (!tip?.visible) continue;
-      mesh.worldToLocal(tip.getWorldPosition(scratch.tip));
-      if (Math.abs(scratch.tip.x) > HEADSET_SLIDER.width / 2 + 0.05 || Math.abs(scratch.tip.y) > HEADSET_SLIDER.height / 2 + 0.06) continue;
-      if (Math.abs(scratch.tip.z) >= Math.abs(fz)) continue;
-      found = true;
-      fx = scratch.tip.x;
-      fy = scratch.tip.y;
-      fz = scratch.tip.z;
-      if (scratch.grip.state !== 'held') scratch.owner = i;
-    }
-    const wasHeld = scratch.grip.state === 'held';
-    const holding = scratch.grip.update(found ? fx : null, fy, fz, HEADSET_SLIDER, delta);
-    if (holding && !wasHeld) uiSound.press();
-    if (!holding && wasHeld) uiSound.release();
-    if (holding) {
-      const before = Math.round(value.current * 100);
-      value.current = scratch.grip.value;
-      const percent = Math.round(scratch.grip.value * 100);
-      if (Math.floor(percent / 10) !== Math.floor(before / 10)) uiSound.tick();
-      if (percent !== scratch.sent) {
-        scratch.sent = percent;
-        onChange(scratch.grip.value);
-      }
-    }
-    scratch.cursor.update(found ? fx : null, fy, fz, holding);
-
-    const state = scratch.grip.state;
-    const key = Math.round(value.current * 100) * 3 + (state === 'held' ? 2 : state === 'hover' ? 1 : 0);
-    if (key !== scratch.drawn) {
-      scratch.drawn = key;
-      drawSlider(canvas, value.current, state);
-      texture.needsUpdate = true;
-    }
+    workspace.flow.update(delta);
+    if (!s.needsFrame || !gl.xr.isPresenting) return;
+    const head = gl.xr.getCamera();
+    head.getWorldPosition(s.head);
+    if (s.head.lengthSq() === 0) return; // no head pose yet
+    head.getWorldDirection(s.forward);
+    s.forward.y = 0;
+    if (s.forward.lengthSq() < 1e-6) return;
+    s.forward.normalize();
+    // Frame +Z points back at the user, so the "front" of the workspace faces them.
+    const yaw = Math.atan2(-s.forward.x, -s.forward.z);
+    s.frame.makeRotationY(yaw).setPosition(
+      s.head.x + s.forward.x * NO_MAT_AHEAD,
+      s.head.y - NO_MAT_BELOW,
+      s.head.z + s.forward.z * NO_MAT_AHEAD,
+    );
+    workspace.setFrame(s.frame, NO_MAT_SIZE.width, NO_MAT_SIZE.depth);
+    s.needsFrame = false;
   });
-
-  return (
-    <mesh ref={meshRef} material={material} visible={false}>
-      <planeGeometry args={[HEADSET_SLIDER.width, HEADSET_SLIDER.height]} />
-      <primitive object={scratch.cursor.mesh} />
-    </mesh>
-  );
-}
-
-
-/** Draws the slider: the track lights up while a fingertip hovers it; the knob grows and fills while it's held. */
-function drawSlider(canvas: HTMLCanvasElement, value: number, state: SliderGripState) {
-  const ctx = canvas.getContext('2d')!;
-  const { width: w, height: h } = canvas;
-  const toPx = (x: number) => (x / HEADSET_SLIDER.width + 0.5) * w;
-  const x0 = toPx(HEADSET_SLIDER.trackStart);
-  const x1 = toPx(HEADSET_SLIDER.trackEnd);
-  const cy = h / 2;
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = 'rgba(251, 250, 247, 0.94)';
-  ctx.beginPath();
-  ctx.roundRect(4, 4, w - 8, h - 8, 48);
-  ctx.fill();
-
-  ctx.fillStyle = '#6b746f';
-  ctx.font = '500 40px "DM Sans", system-ui, sans-serif';
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'left';
-  ctx.fillText('Wound', 44, cy - 24);
-  ctx.fillText('opacity', 44, cy + 24);
-
-  ctx.lineCap = 'round';
-  if (state !== 'idle') {
-    // A soft halo along the track: this is what your finger is on.
-    ctx.lineWidth = 56;
-    ctx.strokeStyle = state === 'held' ? 'rgba(47, 158, 99, 0.22)' : 'rgba(47, 158, 99, 0.12)';
-    ctx.beginPath();
-    ctx.moveTo(x0, cy);
-    ctx.lineTo(x1, cy);
-    ctx.stroke();
-  }
-  ctx.lineWidth = 16;
-  ctx.strokeStyle = '#d6dbd8';
-  ctx.beginPath();
-  ctx.moveTo(x0, cy);
-  ctx.lineTo(x1, cy);
-  ctx.stroke();
-  const knob = x0 + (x1 - x0) * value;
-  ctx.strokeStyle = '#2f9e63';
-  ctx.beginPath();
-  ctx.moveTo(x0, cy);
-  ctx.lineTo(Math.max(knob, x0 + 0.1), cy);
-  ctx.stroke();
-  ctx.fillStyle = state === 'held' ? '#2f9e63' : '#ffffff';
-  ctx.strokeStyle = '#2f9e63';
-  ctx.lineWidth = 8;
-  ctx.beginPath();
-  ctx.arc(knob, cy, state === 'held' ? 40 : state === 'hover' ? 35 : 30, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = state === 'held' ? '#2f9e63' : '#1f2a24';
-  ctx.font = '600 46px "DM Sans", system-ui, sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText(`${Math.round(value * 100)}%`, w - 40, cy + 2);
+  return null;
 }
 
 /** Tells the page (outside the headset) whether a hand is tracked. */

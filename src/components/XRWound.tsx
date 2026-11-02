@@ -4,13 +4,16 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { XREstimatedLight } from 'three/examples/jsm/webxr/XREstimatedLight.js';
+import { mentor, requestFeedback } from '../lib/mentorAnalysis';
+import { uiSound } from '../lib/uiSound';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
+import { workspace } from '../lib/workspaceFlow';
 import { XRHandModel, prepareHandModel } from '../lib/xrHandModel';
 import { conformWound } from '../lib/xrWoundConform';
 import { SKIN_PRESETS, setAutoWorking, xrPrefs, type HandSide } from '../lib/xrPrefs';
 import { XRSkinSampler } from '../lib/xrSkinSampler';
 import { createXRWoundMaterial, skinToneColor } from '../lib/xrWoundMaterial';
-import { MISS_RANGE, PINCH_RANGE, StageFlow, woundLink } from '../lib/woundSteps';
+import { MISS_RANGE, PINCH_RANGE, STAGE_COUNT, STAGE_LABELS, StageFlow, woundLink } from '../lib/woundSteps';
 import { COLORS } from '../mat/xr/text';
 
 const WOUND_URL = `${import.meta.env.BASE_URL}models/Wound.glb`;
@@ -40,6 +43,15 @@ const SKIN_SAMPLE_SECONDS = 0.5;
 const HOLD_SECONDS = 0.5;
 /** …then fades out over this long (s). */
 const FADE_SECONDS = 0.2;
+/** While working, a hand lost this long (s) gets a "can't see your hand" message. */
+const LOST_NOTICE_SECONDS = 0.6;
+/** Entering work: the hand model's wireframe sweeps over the hand this long (s), to show it's aligned. */
+const ALIGN_SWEEP_SECONDS = 1.6;
+/** The wireframe's opacity during the sweep, and its usual (Mesh on) opacity. */
+const SWEEP_OPACITY = 0.5;
+const WIRE_OPACITY = 0.15;
+/** Photos for mentor feedback: longest side (px). */
+const PHOTO_SIZE = 768;
 
 const METACARPALS = [
   'index-finger-metacarpal',
@@ -184,13 +196,15 @@ function addSkinAttributes(geometry: THREE.BufferGeometry) {
 }
 
 /**
- * The wound in the headset: on the chosen hand only. A detailed hand model is
- * posed on that hand's joints every frame (no smoothing: the runtime already
- * predicts poses); the wound is laid onto the model's palm skin and skinned
- * with the model's own weights, so it stays on that skin as the hand moves and
- * bends. The model, drawn depth-only, hides the wound behind the real hand.
- * When the hand is lost the wound stays put for 0.5 s, then fades, and
- * reappears at once at the new pose.
+ * The wound in the headset: on the chosen hand only, and only while the user
+ * is working (the workspace's `work` phase; browsing the mat and the menus
+ * shows no hand and no wound). A detailed hand model is posed on that hand's
+ * joints every frame (no smoothing: the runtime already predicts poses); the
+ * wound is laid onto the model's palm skin and skinned with the model's own
+ * weights, so it stays on that skin as the hand moves and bends. The model,
+ * drawn depth-only, hides the wound behind the real hand. When the hand is
+ * lost the wound stays put for 0.5 s, then fades, and reappears at once at
+ * the new pose; the status board says what happened and how to recover.
  */
 export function XRWound({ strength }: XRWoundProps) {
   const findHand = useHandSpaces();
@@ -344,6 +358,11 @@ export function XRWound({ strength }: XRWoundProps) {
       sampler: new XRSkinSampler(),
       sampleIn: 0,
       samplePoints: [0, 1, 2, 3, 4].map(() => new THREE.Vector3()),
+      flowVersion: -1,
+      working: false,
+      sweep: 0,
+      seenSinceWork: false,
+      lostNotice: -1,
     }),
     [],
   );
@@ -363,6 +382,37 @@ export function XRWound({ strength }: XRWoundProps) {
     const model = xrPrefs.hand === 'left' ? hands.left : hands.right;
     const other = model === hands.left ? hands.right : hands.left;
     other.root.visible = false;
+
+    // Only while working: entering it measures the hand afresh and shows it's tracked.
+    if (state.flowVersion !== workspace.flow.version) {
+      state.flowVersion = workspace.flow.version;
+      const working = workspace.flow.phase === 'work';
+      if (working && !state.working) {
+        state.boundHand = null; // calibrate and lay the wound on afresh
+        state.sweep = ALIGN_SWEEP_SECONDS;
+        state.seenSinceWork = false;
+        workspace.notify('Hand tracking on', `Hold your ${xrPrefs.hand} palm up, open, in front of you.`, 'ok', 5);
+      } else if (!working && state.working) {
+        state.bound = false;
+        state.placed = false;
+        state.lostFor = Infinity;
+        if (state.lostNotice >= 0) workspace.dismiss(state.lostNotice);
+        state.lostNotice = -1;
+      }
+      state.working = working;
+    }
+    if (!state.working) {
+      model.root.visible = false;
+      mesh.visible = false;
+      extras.ring.visible = false;
+      woundLink.flow = state.flow;
+      woundLink.placed = false;
+      woundLink.tracked = false;
+      woundLink.otherInRange = false;
+      mentor.captureRequested = false;
+      return;
+    }
+
     const hand = findHand(xrPrefs.hand);
     // Joints are all-or-nothing: the wrist stands for the whole hand.
     const tracked = !!hand?.joints.wrist?.visible && state.reader.read(hand, state.frame) && model.update(hand);
@@ -416,6 +466,29 @@ export function XRWound({ strength }: XRWoundProps) {
     } else {
       state.lostFor += delta;
     }
+    // Tracking lost while working: say what happened and how to recover; and when it's back.
+    if (tracked) {
+      if (state.lostNotice >= 0) {
+        workspace.notify('Tracking back', '', 'ok', 2);
+        state.lostNotice = -1;
+      }
+      state.seenSinceWork = true;
+    } else if (state.seenSinceWork && state.lostFor > LOST_NOTICE_SECONDS && state.lostNotice < 0) {
+      uiSound.alert();
+      state.lostNotice = workspace.notify(
+        `Can’t see your ${xrPrefs.hand} hand`,
+        'Hold it up in front of the headset, palm open, and keep it in view.',
+        'warn',
+        Infinity,
+      );
+    }
+    // Mentor feedback: the photo is taken here, inside the XR frame (the camera image is only readable now).
+    if (mentor.captureRequested) {
+      mentor.captureRequested = false;
+      const photo = state.sampler.captureImage(gl, PHOTO_SIZE);
+      if (photo) void requestFeedback(photo, state.flow.stage, STAGE_LABELS[state.flow.stage] ?? '');
+      else mentor.set('error', 'I can’t see through the headset camera here: this browser didn’t allow camera access.');
+    }
     const fade = state.lostFor <= HOLD_SECONDS ? 1 : 1 - (state.lostFor - HOLD_SECONDS) / FADE_SECONDS;
     const opacity = state.placed ? THREE.MathUtils.clamp(fade, 0, 1) * THREE.MathUtils.clamp(strength.current ?? 1, 0, 1) : 0;
     material.opacity = opacity;
@@ -430,10 +503,15 @@ export function XRWound({ strength }: XRWoundProps) {
       woundLink.thumbSide.copy(state.reader.across);
       woundLink.normal.copy(state.reader.normal);
     }
-    // The hand model: hides the wound behind the real hand; its wireframe on request.
-    model.root.visible = mesh.visible || (xrPrefs.showHandMesh && tracked);
+    // The hand model: hides the wound behind the real hand. Its wireframe sweeps over the hand
+    // once on entering work (so you can see it's lined up), then shows only with "Hand mesh" on.
+    if (tracked && state.sweep > 0) state.sweep = Math.max(state.sweep - delta, 0);
+    const sweeping = tracked && state.sweep > 0;
+    const wireMaterial = model.wire.material as THREE.MeshBasicMaterial;
+    wireMaterial.opacity = sweeping ? SWEEP_OPACITY * Math.sin((state.sweep / ALIGN_SWEEP_SECONDS) * Math.PI) : WIRE_OPACITY;
+    model.wire.visible = sweeping || xrPrefs.showHandMesh;
+    model.root.visible = mesh.visible || (model.wire.visible && tracked);
     model.occluder.visible = mesh.visible;
-    model.wire.visible = xrPrefs.showHandMesh;
   });
 
   /**
@@ -459,7 +537,12 @@ export function XRWound({ strength }: XRWoundProps) {
       inRange = state.placed && away < PINCH_RANGE;
       near = state.placed && away < MISS_RANGE;
     }
-    flow.update(delta, distance, inRange, near);
+    if (flow.update(delta, distance, inRange, near)) {
+      // A step done: say so (Buddy speaks the next one).
+      uiSound.success();
+      if (flow.stage === 0) workspace.notify('All steps done', 'That’s the full wound. Pinch again to go through it once more.', 'ok', 4);
+      else if (flow.from > 0) workspace.notify(`Step ${flow.from} of ${STAGE_COUNT} done`, '', 'ok', 2.5);
+    }
     woundLink.otherInRange = inRange;
     const u = material.userData.uniforms;
     u.uStage.value = flow.stage;

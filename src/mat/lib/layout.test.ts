@@ -6,6 +6,7 @@ import { LAYOUT, cellSize, layoutKit, type SlotLayout } from './layout';
 const seed = parseKit(structuredClone(seedFile));
 if (!seed.ok) throw new Error(seed.errors.join('\n'));
 const items = seed.kit.items;
+const count = items.length;
 
 const overlaps = (a: SlotLayout, b: SlotLayout) =>
   a.left < b.left + b.width - 1e-9 &&
@@ -14,27 +15,34 @@ const overlaps = (a: SlotLayout, b: SlotLayout) =>
   b.back < a.back + a.depth - 1e-9;
 
 describe('layoutKit', () => {
-  it('fits all 13 items on one page of an 80 × 50 cm mat, inside the margins, without overlaps', () => {
-    const layout = layoutKit(items, 0.8, 0.5);
+  it('fits the whole kit on one page of an 80 × 60 cm mat, inside the margins, without overlaps', () => {
+    const layout = layoutKit(items, 0.8, 0.6);
     expect(layout.pages).toBe(1);
-    expect(layout.slots).toHaveLength(13);
+    expect(layout.slots).toHaveLength(count);
     for (const s of layout.slots) {
       expect(s.left).toBeGreaterThanOrEqual(-0.4 + LAYOUT.margin - 1e-9);
       expect(s.left + s.width).toBeLessThanOrEqual(0.4 - LAYOUT.margin + 1e-9);
-      expect(s.back).toBeGreaterThanOrEqual(-0.25 + LAYOUT.margin - 1e-9);
-      expect(s.back + s.depth).toBeLessThanOrEqual(0.25 - LAYOUT.margin + 1e-9);
+      expect(s.back).toBeGreaterThanOrEqual(-0.3 + LAYOUT.margin - 1e-9);
+      expect(s.back + s.depth).toBeLessThanOrEqual(0.3 - LAYOUT.margin + 1e-9);
       expect(s.oversize).toBe(false);
     }
-    for (let i = 0; i < 13; i++) for (let j = i + 1; j < 13; j++) expect(overlaps(layout.slots[i], layout.slots[j])).toBe(false);
+    for (let i = 0; i < count; i++) for (let j = i + 1; j < count; j++) expect(overlaps(layout.slots[i], layout.slots[j])).toBe(false);
   });
 
   it('keeps step order: left to right, then the next row further forward', () => {
-    const { slots } = layoutKit(items, 0.8, 0.5);
+    const { slots } = layoutKit(items, 0.8, 0.6);
     for (let i = 1; i < slots.length; i++) {
       const [a, b] = [slots[i - 1], slots[i]];
       const sameRow = Math.abs(a.back - b.back) < 1e-9;
       if (sameRow) expect(b.left).toBeGreaterThan(a.left);
       else expect(b.back).toBeGreaterThan(a.back);
+    }
+  });
+
+  it('starts a new row for each group', () => {
+    const { slots } = layoutKit(items, 0.8, 0.6);
+    for (let i = 1; i < slots.length; i++) {
+      if (items[i].group !== items[i - 1].group) expect(slots[i].back).toBeGreaterThan(slots[i - 1].back);
     }
   });
 
@@ -50,14 +58,12 @@ describe('layoutKit', () => {
     }
   });
 
-  it('keeps footprints at true scale and the quantity model beside them', () => {
-    const { slots } = layoutKit(items, 0.8, 0.5);
-    const waxIndex = items.findIndex((i) => i.id === 'wax');
-    const wax = slots[waxIndex];
-    const item = items[waxIndex];
-    expect(wax.footprintX).toBeCloseTo(wax.left + 0.03, 9); // 6 cm tub
-    expect(wax.visualX - wax.footprintX).toBeCloseTo(0.03 + LAYOUT.visualGap + item.visual!.width / 2, 9);
-    expect(wax.width).toBeCloseTo(cellSize(item).width, 9);
+  it('keeps footprints at true scale and a quantity model beside them', () => {
+    const withVisual = [{ footprint: { width: 0.06, depth: 0.06 }, visual: { width: 0.016, depth: 0.016 } }];
+    const [slot] = layoutKit(withVisual, 0.8, 0.5).slots;
+    expect(slot.footprintX).toBeCloseTo(slot.left + 0.03, 9);
+    expect(slot.visualX - slot.footprintX).toBeCloseTo(0.03 + LAYOUT.visualGap + 0.008, 9);
+    expect(slot.width).toBeCloseTo(cellSize(withVisual[0]).width, 9);
   });
 
   it('flags an item bigger than the mat', () => {

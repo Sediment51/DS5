@@ -84,13 +84,83 @@ option. **Quest Link (PC browser over the cable)** only supports VR, not
 passthrough. The page says so, and offers a VR fallback with skin-toned
 virtual hands in a simple room (without the material mat).
 
-The wound goes on your right hand when it's tracked, otherwise the left; a
-floating hint appears while no open hand is seen.
+### The workspace, step by step
 
-**Wound opacity in the headset:** a small panel floats below-left of where
-you look when the session starts; press and slide along it with an index
-fingertip. The headset page has the same slider (live over Quest Link), and
-both remember the last value, as the webcam view's does.
+Mixed reality introduces things one at a time (`src/lib/workspaceFlow.ts`),
+so a first visit is never everything at once:
+
+1. **Set up your workspace.** Only one instruction shows: look at the space
+   in front of you, below eye level, and pinch-trace your material mat on the
+   table. While you trace, a ghost of the mat shows its size: amber ("Keep
+   going") until it's big enough, mint ("Let go to place") once it is. When
+   it's placed, its edge pulses, a chime plays and the board says so. A mat
+   from last time is restored instead, when the headset finds it.
+2. **Meet Buddy.** Buddy flies into the middle of your view, introduces
+   itself, then moves to its spot on the left of the mat (or tap **Got it**).
+3. **Browse.** The mat with your materials, Buddy on the left, and the menus
+   around the mat (below). No hand, no wound. Touch an item's outline or
+   label with a straight index finger to select it: its outline turns solid
+   and its purpose shows. Touch it again to let go.
+4. **Work.** Tap **Start working** (under Buddy). The board says "Hand
+   tracking on", a wireframe sweeps over your hand to show it's lined up,
+   and the wound appears on your palm. Pinch near it with the other hand to
+   step through how it's made; the materials each step uses light up on the
+   mat, and "Step 2 of 6 done" confirms each one. If the headset loses your
+   hand, the board says so and how to recover. **Pause** goes back to browsing.
+
+Without a mat (the VR fallback) it starts at step 2, around a fixed spot in
+front of you.
+
+### Menus
+
+All menus sit around the mat, clear of the middle where you work, and use
+one style and one set of states (hover: green outline; on: green; open: ▾;
+working on it: …; done: ✓; unavailable: ⚠ and greyed). Press with a
+fingertip. Every panel, and Buddy, can be carried with a fist and stays
+where you put it, relative to the mat.
+
+- **☰ Menu** (the mat's front-right corner) opens the main menu: material
+  labels, Buddy and hand-mesh toggles, wound hand (Left / Right), wound
+  height (− / +), **Calibrate** (while working), **Redraw mat** (tap twice)
+  and **Reset all** (settings, panel places, Buddy's spot).
+- **Materials** (above the back-left corner): ‹ Prev / **Step by step** /
+  Next ›, with what's shown ("Step 3 of 9 · Scar wax").
+- **Appearance** (above the back-right corner) opens two titled panels:
+  - **Opacity**: what it changes (Wound or Mat), its value, a slider, − / +
+    and Reset. To slide, **point your index finger** (the other fingers
+    curled) and slide along it. A hand just passing by changes nothing, and
+    the panel says "Point with just your index finger" if you touch it
+    without pointing. While sliding, a bubble shows the value; letting go
+    shows "✓ Set to 64%". The headset page has the same wound slider (live
+    over Quest Link).
+  - **Colour**: skin tone (**Auto** from the headset camera, six presets, a
+    fine Tone slider) and the mat's outline colour (Mint, White, Amber), with
+    Reset.
+- An open menu closes after 12 s untouched; opening one closes the other.
+- **Turn the palm without the wound up** and hold it for half a second to
+  hide or show all the menus.
+- **Status board:** messages float just below your view: what happened
+  (✓), what to do (i), or what went wrong and how to fix it (!).
+
+### Mentor feedback ("Check my work")
+
+While working, **Check my work** (under Buddy) takes a photo through the
+headset camera and Buddy gives short feedback on the current step. While it's
+looking, Buddy shows "Let me have a look at your work…". The photo goes to the
+app's own dev server (`/api/mentor`), which asks Claude (`claude-opus-5-5`,
+low effort, with server-side fallback); the API key stays on the laptop.
+
+1. Put your key in `.env.local` (git ignores it):
+   `ANTHROPIC_API_KEY=sk-ant-…`
+2. `npm run dev` on the laptop.
+3. Connect the Quest by USB and run `adb reverse tcp:5173 tcp:5173`.
+4. In Quest Browser open `http://localhost:5173` (localhost counts as secure
+   for WebXR), then **Start mixed reality** and allow camera access.
+
+It needs the browser to grant WebXR camera access (the same one Auto skin
+tone uses). Without it, or without the key or the laptop server (e.g. on
+GitHub Pages), the button explains why instead. Code:
+`src/lib/mentorAnalysis.ts` (client), `src/server/` (endpoint and prompt).
 
 A detailed sculpted hand model (`public/models/Hand.glb`) is posed on the
 headset's hand joints every frame. It was converted from the project
@@ -117,13 +187,13 @@ average hand (`REFERENCE_PALM_CM` from wrist to middle knuckle).
 - There's no smoothing (the runtime already predicts poses) and no fade
   while the hand is tracked.
 - The skin tone comes from the camera when allowed (Auto), otherwise from
-  the panel.
+  the Colour panel.
 
 ### Headset wound: settings and testing
 
-- **Panel:** the in-headset panel (below and right of straight ahead) picks the hand (Left or Right; only that hand is ever used), **Calibrate** (hold your palm flat: it measures your hand for about 0.5 s and lays the wound on afresh; use it for each new user), **Mesh** (shows the tracked hand model as a wireframe over your real hand, to check how it lines up), the skin tone, and **Height** (raises or sinks the wound on your skin, ±5 mm, saved). **Auto** (on by default) reads your palm's real colour from the headset camera when the browser grants WebXR camera access: green means it's working, amber means no camera access, so the presets are used. Picking a swatch or moving the fine slider switches to manual. Press with an index fingertip; settings are saved.
+- **Settings:** the wound hand (only that hand is ever used), **Calibrate** (hold your palm flat: it measures your hand for about 0.5 s and lays the wound on afresh; use it for each new user), the **Hand mesh** toggle (the tracked hand model as a wireframe over your real hand, to check how it lines up) and the wound's **height** (±5 mm) are in the ☰ Menu; the skin tone is on the Colour panel. **Auto** (on by default) reads your palm's real colour from the headset camera when the browser grants WebXR camera access: the panel says ✓ when it's working and ⚠ when there's no camera access, so the presets are used. Picking a swatch or moving Tone switches to manual. Settings are saved.
 - **Tunable constants** (`src/components/XRWound.tsx`): `LENGTH_CM`, `REFERENCE_PALM_CM`, `ANGLE_DEG`, `OFFSET_MM`, `PALM_OFFSET_MM`, `USE_SKINNING`. The look is `XR_WOUND_LOOK` in `src/lib/xrWoundMaterial.ts`.
-- **Emulator:** in Chrome with Meta's Immersive Web Emulator, choose Quest 3, switch input to hand tracking, then **Start mixed reality → Enter mixed reality**. Pose the left hand with its palm facing you; the wound appears on it, and the panel switches hands.
+- **Emulator:** in Chrome with Meta's Immersive Web Emulator, choose Quest 3, switch input to hand tracking, then open `/?test`, **Start mixed reality → Enter mixed reality**, press **T** to place a test mat, wait for Buddy (or poke **Got it**), poke **Start working**, and pose the left hand with its palm facing you; the wound appears on it.
 - **Headset:** open the site in the Quest browser, allow hand tracking, put the controllers down and hold up the chosen palm. Check that the wound stays glued as you move and turn it fast, bends when you cup the palm, and is hidden by curled fingers and when the back of the hand faces you.
 - **Lighting:** if the browser grants WebXR light estimation, the room's real light replaces the fixed lights.
 
@@ -142,20 +212,20 @@ fallback.
    reality**, and put the controllers down.
 2. **Draw the mat:** pinch thumb and index together on the table and trace
    a rectangle around the area, then let go. A glowing line follows your
-   pinch. Anything under 25 × 20 cm is refused with a prompt to redraw.
+   pinch, and a ghost of the mat shows its size as you go. Anything under
+   25 × 20 cm is refused with a prompt to redraw.
 3. The mat appears on the rectangle, locked to the table (it stays put as
-   you walk around). Items run left to right in step order, rows from the
-   back of the mat to the front. On a small mat they're split into pages.
-4. **Controls** float just beyond the mat's front-right corner. Press them
-   with a bare fingertip:
-   - **Opacity** slider (0–100%) fades the whole overlay so you can see your
-     real items through it. It's remembered.
-   - **‹ Prev / Next ›** turn pages (in step mode they move by step).
-   - **Step mode** highlights one item at a time, shows its purpose large,
-     and dims the rest to 20%.
-   - **Redraw** removes the mat; tap twice to confirm.
+   you walk around). Items run left to right in step order, one row per
+   group (Prep, Build, Colour, Finish), from the back of the mat to the
+   front. Labels lie flat in front of each outline, tilted up towards you.
+   On a small mat they're split into pages.
+4. **Controls** (see Menus above): the **Materials** chip turns pages or
+   steps through items (step mode highlights one item, shows its purpose
+   and dims the rest); **Appearance → Opacity → Mat** fades the overlay so
+   you can see your real items through it (remembered); **Mat** colour is on
+   the Colour panel; **☰ Menu → Redraw mat** removes it (tap twice).
 5. **Turn the palm without the wound up** (your right palm when the wound is
-   on your left) and hold it for half a second to hide or show the controls.
+   on your left) and hold it for half a second to hide or show the menus.
    Turning the wound's palm up just shows the wound; it never hides them.
 6. Next time you enter mixed reality, the last mat is restored
    automatically (Quest's persistent anchors). It reappears where you left
@@ -170,9 +240,8 @@ edge facing you. Points from your hand arriving or lifting off are ignored.
 
 ### Moving things with a fist
 
-Anything in the headset can be moved: the material mat, its control panel,
-the wound-opacity panel and the wound controls panel (hand, skin tone,
-Calibrate, Mesh, height).
+Anything in the headset can be moved: the material mat, every menu panel and
+Buddy.
 
 1. Put your hand **on** it, or **point your hand at it** from up to 2.5 m
    away. It lights up: the mat's edge brightens, a panel turns mint.
@@ -184,9 +253,10 @@ The mat follows your fist in every direction, up and down included, and
 turns with it while staying flat. It stays exactly where you open your
 hand. If that's within 6 cm of a detected table's surface, it settles flush
 onto the table. It's re-anchored where you leave it, so it's still there
-next time. Panels
-follow your fist in 3D and turn to face you. The mat's panel stays where
-you put it relative to the mat (also remembered), and moves with the mat.
+next time. Panels and Buddy
+follow your fist in 3D (panels turn to face you). They stay where you put
+them relative to the mat, and move with it, for the rest of the session;
+**☰ Menu → Reset all** puts them back.
 
 A fist means every finger curled: the farthest of the four fingertips is
 within 0.6 palm-lengths of the middle of the palm. Pointing, pinching and
@@ -212,6 +282,8 @@ Each item:
 | `step` | Order on the mat and in step mode |
 | `name`, `purpose`, `quantity` | Label text; quantity is the large line; purpose shows in step mode |
 | `footprint` | True size in cm: `{ "shape": "circle", "diameter": 6 }`, `{ "shape": "rect", "width": 12, "depth": 7 }` or `{ "shape": "pill", "length": 15, "width": 2 }` (rects and pills run left to right) |
+| `group` (optional) | Related items share a group (`"Prep"`, `"Build"`, …); each group starts a new row |
+| `stages` (optional) | The build steps (1–6) the item is used in, e.g. `[2, 3]`: they light up on the mat during those steps |
 | `quantityVisual` (optional) | A true-scale model of the amount, beside the outline: `{ "type": "sphere", "diameter": 1.6 }`, `{ "type": "blob", "volumeMl": 2.5 }` (a dome of that volume) or `{ "type": "drops", "count": 3 }`, each with an optional `"color": "#rrggbb"` |
 
 The seed footprints are typical product sizes; measure your own items and
@@ -259,14 +331,18 @@ reuses preallocated objects throughout.
 | Hand joints, pen, palm normal | `src/mat/xr/hands.ts` |
 | Pinch hysteresis, stroke buffer, rectangle fit, table choice, layout, poke, palm-up | `src/mat/lib/*.ts` (unit tested) |
 | Kit loading and checking | `src/mat/lib/kit.ts` |
-| Mat, slots, batches, panel, hint, stroke | `src/mat/xr/MatView.ts`, `SlotView.ts`, `slotBatches.ts`, `ControlPanel.ts`, `HintBoard.ts`, `StrokeView.ts` |
+| Mat, slots, batches, tracing preview, stroke | `src/mat/xr/MatView.ts`, `SlotView.ts`, `slotBatches.ts`, `MatPreview.ts`, `StrokeView.ts` |
+| Workspace phases, shared state, status messages | `src/lib/workspaceFlow.ts` (unit tested) |
+| Menus, chips, Opacity / Colour panels, Buddy's actions, status board | `src/components/XRMenus.tsx` |
+| Panel kit: fingertip presses, sliders, the pointing gate, placement around the mat; the shared look and states | `src/lib/xrPanel.ts`, `src/lib/xrPanelStyle.ts` |
+| Mentor feedback: client, dev-server endpoint, prompt | `src/lib/mentorAnalysis.ts`, `src/server/mentorApi.ts`, `src/server/mentorPrompt.ts` (unit tested) |
 
 Limits: with no Space Setup there are no planes, and hit test may find
 nothing, so the table height comes from your pinch (within about a
 centimetre). Anchors and persistent anchors depend on the browser; without
 them the mat still appears but can drift slightly, and isn't restored next
-time. Labels turn to face you, so from a low angle a label can
-overlap the outline behind it a little.
+time. Labels lie at a fixed 30° tilt towards the front of the mat, so they
+read best from where you sat when you traced it.
 
 ## How it works
 
@@ -284,11 +360,10 @@ overlap the outline behind it a little.
 | Palm template, palm surface, wound placement | `src/lib/palmModel.ts` |
 | Webcam palm pose: rigid fit, depth from palm size, jitter meter | `src/lib/webcamPalm.ts`, `src/lib/rigidFit.ts` |
 | Pose smoothing (One Euro on position, size and rotation; deadband; lead) | `src/lib/poseFilter.ts`, `src/lib/oneEuroFilter.ts` |
-| Headset joints → the same rigid palm pose | `src/lib/jointPalm.ts` |
 | Skin colour / camera noise sampling, and lighting from it | `src/lib/skinSampler.ts`, `src/lib/skinLighting.ts` |
 | Invisible hand that hides the wound behind it | `src/lib/handOccluder.ts` |
 | Webcam landmarks → 3D hand pose, camera optics | `src/components/WebcamPoseSource.tsx` |
-| Headset mode: session, VR room, hint panel | `src/components/XRView.tsx`, `src/components/XRScene.tsx` |
+| Headset mode: session, VR room, workspace flow driver | `src/components/XRView.tsx`, `src/components/XRScene.tsx` |
 | Headset hand joints → the same 3D hand pose | `src/components/XRPoseSource.tsx` |
 | HandLandmarker setup (VIDEO mode, 1 hand, confidence 0.6, GPU → CPU fallback) | `src/lib/handLandmarker.ts` |
 

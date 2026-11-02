@@ -223,20 +223,21 @@ export function XRView({ onExit }: XRViewProps) {
               {STATUS_LABEL[handStatus]}
             </span>
             <OpacitySlider value={woundOpacity} onChange={setWoundOpacity} />
-            <p className="xr-note">
-              In the headset, press and slide the “Wound opacity” panel below-left of your view with a
-              fingertip.
-            </p>
-            <p className="xr-note">
-              To move a panel or the material mat, put your hand on it (or point your hand at it) and make
-              a fist: it follows your fist until you open your hand.
-            </p>
             {mode === 'ar' && kitResult?.ok && (
               <p className="xr-note">
-                To lay out your materials, pinch and trace a rectangle on your table: each item gets a
-                true-size outline with its quantity.
+                First, set up your workspace: pinch thumb and index on your table and trace your mat. Buddy
+                then introduces itself; tap <strong>Start working</strong> when you’re ready.
               </p>
             )}
+            <p className="xr-note">
+              In the headset, <strong>☰ Menu</strong> is at the mat’s front-right corner;{' '}
+              <strong>Materials</strong> and <strong>Appearance</strong> (opacity and colour) float above its
+              back corners. Press them with a fingertip.
+            </p>
+            <p className="xr-note">
+              To move the mat, a panel or Buddy, put your hand on it (or point your hand at it) and make a
+              fist: it follows your fist until you open your hand.
+            </p>
             <button type="button" className="button button--primary" onClick={exitSession}>
               Exit headset
             </button>
@@ -315,6 +316,17 @@ export function XRView({ onExit }: XRViewProps) {
         )}
 
         {support?.ar && <KitSummary result={kitResult} />}
+
+        <details className="xr-details">
+          <summary>Mentor feedback (“Check my work”)</summary>
+          <p>
+            Buddy can look at your hand through the headset camera and give feedback on the current step. It
+            needs the app running on this laptop with an Anthropic API key in <code>.env.local</code>{' '}
+            (<code>ANTHROPIC_API_KEY=…</code>), the Quest on USB with <code>adb reverse tcp:5173 tcp:5173</code>,
+            and the page opened at <strong>localhost:5173</strong> in Quest Browser. Photos are sent to the AI
+            service only when you press the button.
+          </p>
+        </details>
 
         {!mode && (
           <button type="button" className="button button--quiet xr-back" onClick={onExit}>

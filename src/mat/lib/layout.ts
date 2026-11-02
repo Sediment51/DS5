@@ -31,6 +31,8 @@ export const LAYOUT = {
 export interface LayoutItem {
   footprint: { width: number; depth: number };
   visual: { width: number; depth: number } | null;
+  /** Items of a group sit together: a new group starts a new row. */
+  group?: string | null;
 }
 
 export interface SlotLayout {
@@ -98,7 +100,8 @@ export function layoutKit(items: LayoutItem[], matWidth: number, matDepth: numbe
   items.forEach((item, index) => {
     const { width, depth } = cellSize(item);
     const added = row.length ? LAYOUT.gutter + width : width;
-    if (row.length > 0 && rowWidth + added > innerWidth) closeRow();
+    const newGroup = index > 0 && (item.group ?? null) !== (items[index - 1].group ?? null);
+    if (row.length > 0 && (newGroup || rowWidth + added > innerWidth)) closeRow();
     rowWidth += row.length ? LAYOUT.gutter + width : width;
     row.push({ item: index, width, depth });
   });

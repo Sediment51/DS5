@@ -11,10 +11,6 @@ import {
   GROWTH_TARGETS,
   AWAY_RELOCK_DEG,
   NO_BLINK,
-  STILL_SECONDS,
-  STILL_SPEED,
-  UNLOCK_MOVE,
-  WORK_SIDE,
   buddyTarget,
   expressionOffset,
   growthForStage,
@@ -22,17 +18,26 @@ import {
   type Expression,
 } from '../lib/buddy';
 import { BuddyMotion, type MotionInput } from '../lib/buddyMotion';
+import type { GrabSystem } from '../lib/grab';
+import { mentor } from '../lib/mentorAnalysis';
+import { uiSound } from '../lib/uiSound';
 import { STAGE_COUNT, STAGE_LABELS, woundLink } from '../lib/woundSteps';
+import { workspace, type WorkspacePhase } from '../lib/workspaceFlow';
 import { xrPrefs } from '../lib/xrPrefs';
 import { SpeechBubble } from '../lib/xrSpeechBubble';
+import { buddyHomeLocal } from './XRMenus';
 
 const BUDDY_URL = `${import.meta.env.BASE_URL}models/buddy_character.glb`;
 
 /** What Buddy says on its own occasions (the stage instructions are STAGE_LABELS). */
 export const BUDDY_LINES = {
-  hello: 'Hi! I’m Buddy. Pinch near the wound with your other hand to see how it’s made.',
+  hello: 'Hi! I’m Buddy, your mentor. Your mat’s ready, and those are your materials. Tap Start working when you’d like to begin.',
+  ready: 'I’ll wait over here. Tap Start working when you’re ready.',
+  work: 'Let’s begin! Pinch near the wound with your other hand to go step by step.',
+  paused: 'Paused. Tap Start working to carry on.',
   closer: 'Pinch a little closer to the wound.',
   done: 'You did it! That’s the full wound.',
+  checking: 'Let me have a look at your work…',
 };
 
 /** Idle_Float's weight: the only animation that always plays, kept gentle. */
@@ -43,10 +48,6 @@ const FLAP_WEIGHT = 0.7;
 const MAX_DT = 0.05;
 /** Cross-fades between clips (s). */
 const FADE = 0.3;
-/** With the wound hand lost this long (s), Buddy dozes off. */
-const SLEEP_AFTER = 8;
-/** The hand counts as lost (Buddy waits in front of the eyes) after this long without it (s). */
-const LOST_AFTER = 0.5;
 /** Blinks: this long (s), every 2.2–5.2 s; talking flips the mouth every TALK_FLIP s. */
 const BLINK_SECONDS = 0.12;
 const TALK_FLIP = 0.14;
@@ -54,10 +55,16 @@ const TALK_FLIP = 0.14;
 const GROW_SECONDS = 1;
 /** A passing line ("closer") stays this long after typing (s), then the current instruction returns. */
 const PASSING_SECONDS = 3.5;
-/** The bubble's gap beside Buddy (m), and how far Buddy must cross the wound before it changes side (m). */
+/** The bubble's gap beside Buddy (m). */
 const BUBBLE_GAP = 0.012;
-const SIDE_SWITCH = 0.02;
 const ENV_INTENSITY = 0.35;
+/** The introduction: in the middle of the view this far ahead (m) and this far below the eyes (m)… */
+const INTRO_AHEAD = 0.55;
+const INTRO_BELOW = 0.08;
+/** …and once its line is typed out it waits this long (s) before moving aside (or "Got it" moves it at once). */
+const INTRO_HOLD = 4;
+/** Carried with a fist, it grows a little so you can see you've got it. */
+const HELD_SCALE = 1.12;
 
 type Clip = 'Idle_Float' | 'Wave' | 'Happy_Bounce' | 'Excited' | 'Sleepy' | 'Nod_Yes' | 'Shake_No';
 
@@ -116,16 +123,16 @@ function makeRig(gltf: GLTF): BuddyRig {
 }
 
 /**
- * Buddy in the headset: lives beside the wound hand (never in front of the
- * wound, always in view), getting about like a little creature (BuddyMotion:
- * it stays put for small moves, then decides and flies over), and speaks the
- * step flow's instructions in a speech bubble. Idle_Float, gently, is its only constant
- * motion; every other clip plays on an occasion (hello, the flow starting,
- * each stage, a near miss, the flow done, dozing off). Its flower grows with
- * the stages. Reads the wound through `woundLink`; never stops the wound:
- * any error hides Buddy instead.
+ * Buddy, the mentor, in the headset. It appears once the mat is down, in the
+ * middle of the view, introduces itself, then flies to its spot on the left
+ * of the mat and stays there, out of the way of the hand and the mat (carry
+ * it with a fist to put it anywhere else). It speaks only when there's
+ * something to say: a new phase, each step of the flow, a near miss, and
+ * feedback on your work. Calm at rest (a gentle float, no flourishes). Reads
+ * the wound through `woundLink`; never stops the wound: any error hides
+ * Buddy instead.
  */
-export function XRBuddy({ active }: { active: boolean }) {
+export function XRBuddy({ active, grab }: { active: boolean; grab: GrabSystem }) {
   const [rig, setRig] = useState<BuddyRig | null>(null);
   const gl = useThree((s) => s.gl);
 
@@ -185,13 +192,12 @@ export function XRBuddy({ active }: { active: boolean }) {
   const state = useMemo(
     () => ({
       broken: false,
-      placed: false,
-      greeted: false,
       started: false,
-      asleep: false,
-      lostFor: Infinity,
       steps: 0,
       misses: 0,
+      flowVersion: -1,
+      phase: 'setup' as WorkspacePhase,
+      mentorVersion: -1,
       // Clips: the base loop, the one-shot playing and at most one waiting.
       base: 'Idle_Float' as Clip,
       current: null as THREE.AnimationAction | null,
@@ -215,28 +221,24 @@ export function XRBuddy({ active }: { active: boolean }) {
       pendingDots: null as number | null,
       pendingFace: null as Expression | null,
       pendingPassing: false,
-      // Moves the next landing finishes: a wave (hello), a bounce (flow done).
+      // A wave when it lands for the introduction.
       waveOnLanding: false,
-      bounceOnLanding: false,
+      // The introduction: its spot, and how long its line has been on show.
+      introSpot: new THREE.Vector3(),
+      introShown: 0,
       // Growth.
       growth: [1, 1, 1],
-      // Working: the hand still during a step, Buddy parked to its left.
-      handPrev: new THREE.Vector3(),
-      handSeen: false,
-      handSpeed: 0,
-      stillFor: 0,
-      locked: false,
-      lockHand: new THREE.Vector3(),
-      lockPoint: new THREE.Vector3(),
-      left: new THREE.Vector3(),
-      // Without the hand: a spot off to the side, locked until it would leave the view.
+      // Carried with a fist.
+      carried: false,
+      carryPos: new THREE.Vector3(),
+      grabState: 'none' as 'none' | 'hover' | 'held',
+      // Without a workspace: a spot off to the side, locked until it would leave the view.
       awayLocked: false,
       awayPoint: new THREE.Vector3(),
       awaySide: new THREE.Vector3(),
       // Motion.
       motion: new BuddyMotion(),
       entered: false,
-      home: new THREE.Vector3(),
       input: {
         eye: new THREE.Vector3(),
         gaze: new THREE.Vector3(),
@@ -251,7 +253,8 @@ export function XRBuddy({ active }: { active: boolean }) {
       } as MotionInput,
       headTurn: new THREE.Quaternion(),
       scratch: new THREE.Vector3(),
-      bubbleSide: 1 as 1 | -1,
+      frameInverse: new THREE.Matrix4(),
+      bubbleSide: -1 as 1 | -1,
       bubbleAt: new THREE.Vector3(),
       bubbleGoal: new THREE.Vector3(),
       bubbleVel: new THREE.Vector3(),
@@ -260,6 +263,7 @@ export function XRBuddy({ active }: { active: boolean }) {
     }),
     [],
   );
+  state.motion.calm = true;
 
   // A one-shot finished: back to the base loop, then the queued one if any.
   useEffect(() => {
@@ -278,6 +282,40 @@ export function XRBuddy({ active }: { active: boolean }) {
     rig.mixer.addEventListener('finished', onFinished);
     return () => rig.mixer.removeEventListener('finished', onFinished);
   }, [rig, state]);
+
+  // Carry Buddy with a fist; where you let go becomes its spot (relative to the mat).
+  useEffect(
+    () =>
+      grab.add({
+        bounds: new THREE.Box3(new THREE.Vector3(-0.05, -0.05, -0.05), new THREE.Vector3(0.05, 0.05, 0.05)),
+        style: 'panel',
+        canGrab: () => holder.visible && !state.broken,
+        worldMatrix: (out) => {
+          holder.updateWorldMatrix(true, false);
+          out.copy(holder.matrixWorld);
+        },
+        begin: () => {
+          state.carried = true;
+        },
+        move: (world) => {
+          state.carryPos.setFromMatrixPosition(world);
+          state.motion.place(state.carryPos);
+        },
+        end: () => {
+          state.carried = false;
+          if (workspace.frameValid) {
+            state.frameInverse.copy(workspace.frame).invert();
+            workspace.buddyLocal = state.carryPos.clone().applyMatrix4(state.frameInverse);
+          }
+          uiSound.release();
+          workspace.notify('Buddy will wait here', 'Make a fist on Buddy to move it again.', 'ok', 2.5);
+        },
+        setGrabState: (grabState) => {
+          state.grabState = grabState;
+        },
+      }),
+    [grab, holder, state],
+  );
 
   useEffect(() => {
     if (import.meta.env.DEV) (window as unknown as { __buddy?: unknown }).__buddy = { rig, state, holder, bubble };
@@ -311,15 +349,6 @@ export function XRBuddy({ active }: { active: boolean }) {
       return;
     }
     startClip(r, name, repeats);
-  }
-
-  function setBase(r: BuddyRig, name: Clip) {
-    if (state.base === name) return;
-    const old = r.actions.get(state.base);
-    state.base = name;
-    if (state.current) return; // the one-shot hands over to the new base when it ends
-    old?.fadeOut(FADE);
-    fadeInBase(r);
   }
 
   function react(face: Expression, seconds: number) {
@@ -368,39 +397,7 @@ export function XRBuddy({ active }: { active: boolean }) {
     }
   });
 
-  /** Locks Buddy to the hand's left once the hand is still during a step; lets go when the hand moves on or the flow ends. */
-  function updateWorkLock(dt: number, tracked: boolean, working: boolean) {
-    const link = woundLink;
-    if (tracked) {
-      if (state.handSeen) {
-        const speed = link.point.distanceTo(state.handPrev) / Math.max(dt, 1e-4);
-        state.handSpeed += (speed - state.handSpeed) * (1 - Math.exp(-8 * dt));
-      }
-      state.handPrev.copy(link.point);
-      state.handSeen = true;
-      state.stillFor = state.handSpeed < STILL_SPEED ? state.stillFor + dt : 0;
-    }
-    if (!working) {
-      state.locked = false;
-      return;
-    }
-    if (state.locked) {
-      if (tracked && link.point.distanceTo(state.lockHand) > UNLOCK_MOVE) {
-        state.locked = false;
-        state.stillFor = 0;
-      }
-      return;
-    }
-    if (tracked && state.stillFor > STILL_SECONDS) {
-      const input = state.input;
-      state.locked = true;
-      state.lockHand.copy(link.point);
-      state.left.copy(input.right).negate();
-      buddyTarget(state.lockPoint, input.eye, input.gaze, link.point, state.left, WORK_SIDE);
-    }
-  }
-
-  /** Without the hand: off to the wound hand's side, at a distance, staying put until it would leave the view. */
+  /** Without a workspace: off to the side, at a distance, staying put until it would leave the view. */
   function awaySpot() {
     const input = state.input;
     if (state.awayLocked) {
@@ -408,18 +405,60 @@ export function XRBuddy({ active }: { active: boolean }) {
       const off = THREE.MathUtils.radToDeg(state.scratch.angleTo(input.gaze));
       if (off <= AWAY_RELOCK_DEG) return state.awayPoint;
     }
-    state.awaySide.copy(input.right).multiplyScalar(xrPrefs.hand === 'left' ? -1 : 1);
+    state.awaySide.copy(input.right).negate();
     buddyTarget(state.awayPoint, input.eye, input.gaze, null, state.awaySide);
     state.awayLocked = true;
     return state.awayPoint;
   }
 
+  /** A new phase of the workspace: what Buddy does and says about it. */
+  function enterPhase(r: BuddyRig, phase: WorkspacePhase, from: WorkspacePhase) {
+    const input = state.input;
+    const flow = woundLink.flow;
+    if (flow) {
+      state.steps = flow.steps;
+      state.misses = flow.misses;
+    }
+    if (phase === 'setup') {
+      bubble.clear();
+      state.line = '';
+      state.entered = false;
+      return;
+    }
+    if (phase === 'intro') {
+      // In the middle of the view, a little below the eyes.
+      state.scratch.copy(input.gaze).setY(0);
+      if (state.scratch.lengthSq() < 1e-6) state.scratch.set(0, 0, -1);
+      state.scratch.normalize();
+      state.introSpot.copy(input.eye).addScaledVector(state.scratch, INTRO_AHEAD);
+      state.introSpot.y -= INTRO_BELOW;
+      state.introShown = 0;
+      react('happy', 2.5);
+      if (state.motion.travelling || !state.entered) state.waveOnLanding = true;
+      else play(r, 'Wave');
+      say(BUDDY_LINES.hello, null, null);
+      return;
+    }
+    if (phase === 'browse') {
+      say(from === 'work' ? BUDDY_LINES.paused : BUDDY_LINES.ready, null, null);
+      return;
+    }
+    // work
+    if (!state.started) {
+      state.started = true;
+      play(r, 'Excited');
+      react('excited', 0.7);
+    } else play(r, 'Nod_Yes');
+    say(BUDDY_LINES.work, null, 'determined');
+  }
+
   function frame(delta: number) {
     const r = rig;
-    const presenting = gl.xr.isPresenting;
-    holder.visible = !!r && active && presenting;
+    const phase = workspace.flow.phase;
+    holder.visible = !!r && active && gl.xr.isPresenting && phase !== 'setup' && xrPrefs.buddy;
     if (!r || !holder.visible) {
       bubble.setOpacity(0);
+      if (phase === 'setup') state.entered = false;
       return;
     }
     const dt = Math.min(delta, MAX_DT);
@@ -427,6 +466,7 @@ export function XRBuddy({ active }: { active: boolean }) {
     const flow = link.flow;
     const motion = state.motion;
     const input = state.input;
+    const working = phase === 'work';
 
     // The head.
     const head = gl.xr.getCamera();
@@ -435,78 +475,52 @@ export function XRBuddy({ active }: { active: boolean }) {
     input.right.setFromMatrixColumn(head.matrixWorld, 0).normalize();
     input.up.setFromMatrixColumn(head.matrixWorld, 1).normalize();
 
-    // Home: the placement rules (beside the hand, clear of the wound, in view; ahead of the eyes without the hand).
-    const hand = link.tracked || (link.placed && state.lostFor < LOST_AFTER);
-    // Working (a step shown, the hand still): park to the hand's left, out of the way, and stay.
-    const wasLocked = state.locked;
-    updateWorkLock(dt, link.tracked, (flow?.stage ?? 0) > 0);
-    if (state.locked) input.home.copy(state.lockPoint);
-    else if (hand) {
-      buddyTarget(input.home, input.eye, input.gaze, link.point, link.thumbSide);
-      state.awayLocked = false; // a fresh side spot next time the hand goes
-    } else input.home.copy(awaySpot());
-    input.wound = link.placed ? link.point : null;
-    input.watchWound = link.otherInRange;
-    input.facingViewer = bubble.hasMessage && !motion.asleep;
+    // The workspace's phase.
+    if (state.flowVersion !== workspace.flow.version) {
+      state.flowVersion = workspace.flow.version;
+      const from = state.phase;
+      state.phase = phase;
+      enterPhase(r, phase, from);
+    }
+
+    // Home: the middle of the view for the introduction; then its spot left of the mat (or where it was put).
+    if (state.carried) input.home.copy(state.carryPos);
+    else if (phase === 'intro') input.home.copy(state.introSpot);
+    else if (workspace.frameValid) buddyHomeLocal(input.home).applyMatrix4(workspace.frame);
+    else input.home.copy(awaySpot());
+    input.wound = working && link.placed ? link.point : null;
+    input.watchWound = working && link.otherInRange;
+    input.facingViewer = bubble.hasMessage;
     // Any expression faces the viewer: a reaction, talking, an occasion's clip, or curiosity at a coming pinch.
-    input.expressive =
-      !motion.asleep && (state.eventFor > 0 || (bubble.typing && bubble.hasMessage) || !!state.current || link.otherInRange);
-    input.idle = !state.current && !bubble.typing && !state.pending && link.tracked && !state.locked;
+    input.expressive = state.eventFor > 0 || (bubble.typing && bubble.hasMessage) || !!state.current || input.watchWound;
+    input.idle = false;
     if (!state.entered) {
-      // Session start: fly in from the side of the view (the hand's side, if known).
+      // Fly in from the left of the view.
       state.entered = true;
-      motion.enter(input, hand ? Math.sign(state.scratch.subVectors(link.point, input.eye).dot(input.right)) || 1 : 1);
+      motion.enter(input, -1);
     }
 
-    // The wound hand.
-    if (link.tracked) {
-      if (state.asleep) {
-        state.asleep = false;
-        setBase(r, 'Idle_Float');
-        react('surprised', 0.6);
-        motion.wake();
-      }
-      state.lostFor = 0;
-      if (!state.greeted) {
-        state.greeted = true;
-        react('happy', 2);
-        if (motion.travelling) state.waveOnLanding = true;
-        else play(r, 'Wave');
-        say(BUDDY_LINES.hello, null, null);
-      }
-    } else {
-      state.lostFor += dt;
-      if (state.greeted && !state.asleep && state.lostFor > SLEEP_AFTER) {
-        state.asleep = true;
-        setBase(r, 'Sleepy');
-        motion.sleep();
-      }
+    // The introduction moves aside by itself once it's been read.
+    if (phase === 'intro' && !bubble.typing && !state.pending && bubble.hasMessage && !motion.travelling) {
+      state.introShown += dt;
+      if (state.introShown > INTRO_HOLD) workspace.flow.introDone();
     }
 
-    // The step flow's occasions, each with its move.
-    if (flow && flow.steps !== state.steps) {
+    // The step flow's occasions (only while working).
+    if (flow && working && flow.steps !== state.steps) {
       state.steps = flow.steps;
       const stage = flow.stage;
       if (stage === 0) {
-        // Done: a lap of honour round the hand, then bounce at home (just a bounce where it is if you were working).
         react('love', 2.5);
-        if (link.placed && !wasLocked) {
-          motion.orbitHand(link.point, input.right, input.up);
-          state.bounceOnLanding = true;
-        } else play(r, 'Happy_Bounce', 2);
+        play(r, 'Happy_Bounce', 2);
         say(BUDDY_LINES.done, null, null);
       } else {
-        if (!state.started) {
-          state.started = true;
-          play(r, 'Excited');
-          react('excited', 0.7);
-        }
         // A nod where it is: it never comes over to the hand while you work.
         play(r, 'Nod_Yes');
         say(STAGE_LABELS[stage], stage, 'determined');
       }
     }
-    if (flow && flow.misses !== state.misses) {
+    if (flow && working && flow.misses !== state.misses) {
       state.misses = flow.misses;
       play(r, 'Shake_No');
       react('confused', 2);
@@ -514,22 +528,32 @@ export function XRBuddy({ active }: { active: boolean }) {
       sayPassing(BUDDY_LINES.closer);
     }
 
+    // Feedback on your work.
+    if (state.mentorVersion !== mentor.version) {
+      state.mentorVersion = mentor.version;
+      if (mentor.status === 'processing') {
+        react('thinking', 60);
+        say(BUDDY_LINES.checking, null, 'thinking');
+      } else if (mentor.status === 'done') {
+        react('happy', 2);
+        play(r, 'Nod_Yes');
+        say(mentor.text, null, 'cheerful');
+      } else if (mentor.status === 'error') {
+        react('confused', 2);
+        say(mentor.text, null, null);
+      }
+    }
+
     // Move.
     const event = motion.update(dt, input);
-    if (event === 'visitArrived') play(r, 'Nod_Yes');
-    if (event === 'arrived') {
-      if (state.waveOnLanding) {
-        state.waveOnLanding = false;
-        play(r, 'Wave');
-      }
-      if (state.bounceOnLanding) {
-        state.bounceOnLanding = false;
-        play(r, 'Happy_Bounce', 2);
-      }
+    if (event === 'arrived' && state.waveOnLanding) {
+      state.waveOnLanding = false;
+      play(r, 'Wave');
     }
     flushSpeech();
     holder.position.copy(motion.position);
     holder.quaternion.copy(motion.quaternion);
+    holder.scale.setScalar(state.grabState === 'none' ? 1 : HELD_SCALE);
     r.body.scale.copy(r.bodyScale).multiply(motion.stretch);
 
     // Flapping while flying: Idle_Float gives way to Excited with speed (not over an occasion's clip).
@@ -552,19 +576,13 @@ export function XRBuddy({ active }: { active: boolean }) {
       state.passingFor -= dt;
       if (state.passingFor <= 0) bubble.say(state.line, state.lineDots, true);
     }
-    const talking = bubble.typing && bubble.hasMessage && !state.asleep;
+    const talking = bubble.typing && bubble.hasMessage;
 
-    // The face: a reaction, else the line's face while it types, else curious near a pinch, else happy (or asleep).
+    // The face: a reaction, else the line's face while it types, else curious near a pinch, else happy.
     state.eventFor -= dt;
-    let face: Expression = state.asleep
-      ? 'sleepy'
-      : state.eventFor > 0
-        ? state.eventFace
-        : talking && state.typingFace
-          ? state.typingFace
-          : link.otherInRange
-            ? 'curious'
-            : 'happy';
+    if (mentor.status !== 'processing' && state.eventFace === 'thinking') state.eventFor = Math.min(state.eventFor, 0);
+    let face: Expression =
+      state.eventFor > 0 ? state.eventFace : talking && state.typingFace ? state.typingFace : input.watchWound ? 'curious' : 'happy';
     state.talkClock = talking ? state.talkClock + dt : 0;
     if (talking && Math.floor(state.talkClock / TALK_FLIP) % 2 === 1) face = 'talk';
     state.blinkIn -= dt;
@@ -583,17 +601,18 @@ export function XRBuddy({ active }: { active: boolean }) {
 
     r.mixer.update(dt);
 
-    // The bubble: beside Buddy on the side away from the wound, following with a little lag, upright and turned to the viewer.
-    const speaking = bubble.hasMessage && !motion.asleep;
+    // The bubble: beside Buddy on the side away from the mat, following with a little lag, upright and turned to the viewer.
+    const speaking = bubble.hasMessage;
     bubble.setOpacity(speaking ? motion.bubbleOpacity : 0);
     if (!speaking) {
       state.bubblePlaced = false;
       return;
     }
-    if (hand) {
-      const across = state.scratch.subVectors(holder.position, link.point).dot(input.right);
-      if (Math.abs(across) > SIDE_SWITCH) state.bubbleSide = across >= 0 ? 1 : -1;
-    }
+    if (phase !== 'intro' && workspace.frameValid) {
+      state.scratch.setFromMatrixPosition(workspace.frame);
+      const across = state.scratch.subVectors(holder.position, state.scratch).dot(input.right);
+      state.bubbleSide = across >= 0 ? 1 : -1;
+    } else state.bubbleSide = 1;
     const half = BUDDY_SIZE_CM / 200;
     state.bubbleGoal
       .copy(holder.position)

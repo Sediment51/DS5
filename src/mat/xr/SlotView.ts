@@ -8,8 +8,13 @@ import { COLORS, makeText, setTextOpacity } from './text';
 const LABEL_LIFT = 0.004;
 export const BADGE_RADIUS = 0.0075;
 const TEXT_GAP = 0.0025;
-const SIZES = { name: 0.0095, quantity: 0.0135, purpose: 0.016, badge: 0.0095 };
-const ACTIVE_LABEL_SCALE = 1.2;
+const SIZES = { name: 0.0125, quantity: 0.0095, purpose: 0.0115, badge: 0.0095 };
+const ACTIVE_LABEL_SCALE = 1.15;
+/**
+ * Labels lie on the table in front of their outline, raised this far (degrees)
+ * from flat towards the user: readable from a seat, never standing up.
+ */
+const LABEL_TILT_DEG = 30;
 
 const sphereGeometry = new THREE.SphereGeometry(1, 24, 16);
 /** Upper half of a unit sphere: a dome for liquids, scaled flat. */
@@ -20,15 +25,15 @@ const toMat = new THREE.Matrix4();
 
 /**
  * One item on the mat: where its outline goes, its quantity model, and its
- * label (step badge, name, quantity, and in step mode its purpose), which
- * turns to face the user. The outline, badge and text are drawn by the
- * mat's shared batches; this keeps their state and works out the label's
- * pose each frame.
+ * label (step badge, name, quantity, and when highlighted its purpose),
+ * lying on the table tilted towards the user. The outline, badge and text are
+ * drawn by the mat's shared batches; this keeps their state and works out
+ * the label's pose.
  */
 export class SlotView {
   /** The quantity model, resting on the table. */
   readonly visual = new THREE.Group();
-  /** An empty frame turned towards the user; the label's texts and badge follow it. */
+  /** An empty frame lying on the table, tilted up towards the user; the label's texts and badge follow it. */
   readonly label = new THREE.Group();
   /** Every text of this slot, for the shared text batch. */
   readonly texts: Text[];
@@ -37,6 +42,11 @@ export class SlotView {
   active = false;
   footprintX = 0;
   footprintZ = 0;
+  /** The whole cell (outline and label), for pressing it: centre and size. */
+  cellX = 0;
+  cellZ = 0;
+  cellWidth = 0;
+  cellDepth = 0;
 
   private readonly visualMaterial: THREE.MeshStandardMaterial | null;
   private readonly badgeText: Text;
@@ -51,6 +61,8 @@ export class SlotView {
       : null;
     if (item.visual && this.visualMaterial) buildVisual(this.visual, item.visual, this.visualMaterial);
 
+    // Flat (text up = away from the user), then raised towards them.
+    this.label.rotation.x = THREE.MathUtils.degToRad(-90 + LABEL_TILT_DEG);
     this.badgeText = makeText(String(item.step), {
       size: SIZES.badge,
       weight: 'bold',
@@ -59,8 +71,9 @@ export class SlotView {
       anchorY: 'middle',
       halo: false,
     });
-    this.name = makeText(item.name, { size: SIZES.name, color: COLORS.name, anchorY: 'bottom' });
-    this.quantity = makeText(item.quantity, { size: SIZES.quantity, weight: 'bold', anchorY: 'bottom' });
+    // The name is the main line; the quantity is secondary; the purpose shows only when highlighted.
+    this.name = makeText(item.name, { size: SIZES.name, weight: 'bold', color: COLORS.label, anchorY: 'bottom' });
+    this.quantity = makeText(item.quantity, { size: SIZES.quantity, color: COLORS.muted, anchorY: 'bottom' });
     this.purpose = makeText(item.purpose, { size: SIZES.purpose, weight: 'bold', color: COLORS.mint, anchorY: 'bottom' });
     this.texts = [this.badgeText, this.name, this.quantity, this.purpose];
     for (const text of this.texts) text.matrixAutoUpdate = false;
@@ -73,6 +86,10 @@ export class SlotView {
     this.page = slot.page;
     this.footprintX = slot.footprintX;
     this.footprintZ = slot.footprintZ;
+    this.cellX = slot.left + slot.width / 2;
+    this.cellZ = slot.back + slot.depth / 2;
+    this.cellWidth = slot.width;
+    this.cellDepth = slot.depth;
     this.visual.position.set(slot.visualX, 0, slot.visualZ);
     this.label.position.set(slot.labelX, LABEL_LIFT, slot.labelZ);
     this.name.maxWidth = slot.width - (2 * BADGE_RADIUS + 0.004);
@@ -104,13 +121,11 @@ export class SlotView {
   }
 
   /**
-   * Turns the label to face `target` (the eyes) and poses its texts and
-   * badge in the space of `matInverse` (the inverse of the mat overlay's
-   * world matrix), where the batches draw them.
+   * Poses the label's texts and badge in the space of `matInverse` (the
+   * inverse of the mat overlay's world matrix), where the batches draw them.
    * @param badgeMatrix receives the badge's pose.
    */
-  faceTowards(target: THREE.Vector3, matInverse: THREE.Matrix4, badgeMatrix: THREE.Matrix4) {
-    this.label.lookAt(target);
+  pose(matInverse: THREE.Matrix4, badgeMatrix: THREE.Matrix4) {
     this.label.updateMatrixWorld();
     toMat.multiplyMatrices(matInverse, this.label.matrixWorld);
     for (let i = 0; i < this.texts.length; i++) {
@@ -133,9 +148,10 @@ export class SlotView {
   }
 
   /**
-   * Stacks the label upwards from the table: purpose (in step mode) at the
-   * bottom, then quantity, then the badge and name on top — so it reads
-   * name, quantity, purpose from the top, and never dips below the table.
+   * Stacks the label from its front edge back (its "up" runs away from the
+   * user on the tilted label): purpose (when highlighted) nearest, then
+   * quantity, then the badge and name furthest — so it reads name, quantity,
+   * purpose from the top, and never dips below the table.
    */
   private readonly stackLabel = () => {
     const height = (text: Text) => {

@@ -1,16 +1,18 @@
 import * as THREE from 'three';
 import type { Grabbable, GrabState } from '../../lib/grab';
-import { xrPrefs } from '../../lib/xrPrefs';
+import { uiSound } from '../../lib/uiSound';
+import { woundLink } from '../../lib/woundSteps';
+import { workspace, type MatControls } from '../../lib/workspaceFlow';
+import { MAT_ACCENTS, xrPrefs } from '../../lib/xrPrefs';
 import type { Kit } from '../lib/kit';
-import { clearSavedMat, loadOpacity, loadSavedMat, saveMat, saveOpacity, type SavedMat } from '../lib/matStore';
+import { clearSavedMat, loadOpacity, saveMat, saveOpacity, type SavedMat } from '../lib/matStore';
 import { PalmUpToggle } from '../lib/palmUp';
 import { PinchDetector } from '../lib/pinch';
 import { fitRectangle, isBigEnough, orientToViewer, type MatPlacement } from '../lib/rectFit';
 import { StrokeBuffer } from '../lib/stroke';
 import { medianY, pointInPolygon, surfaceFromPen } from '../lib/surface';
-import { ControlPanel, PANEL_SIZE, type PanelButton } from './ControlPanel';
 import { HandTracker, type HandState } from './hands';
-import { HintBoard } from './HintBoard';
+import { MatPreview } from './MatPreview';
 import { MatView } from './MatView';
 import { StrokeView } from './StrokeView';
 import { detectedHorizontalPlanes, findSurfacePlane, SurfaceProbe } from './surfaceProbe';
@@ -38,45 +40,49 @@ type Phase = 'draw' | 'drawing' | 'settling' | 'placed' | 'restoring';
 const MIN_STROKE_POINTS = 12;
 /** Pen points more than this above the table are the hand arriving or leaving. */
 const STROKE_LIFT = 0.04;
+/** The live preview is refitted every this many new pen points. */
+const PREVIEW_EVERY = 6;
 /** Give up looking for a restored mat after this long (s). */
 const RESTORE_TIMEOUT = 12;
-/** How long the drawing prompt shows (s); the injury session has its own hints too. */
-const DRAW_HINT_TIME = 10;
 /** How quickly the overlay follows the opacity slider (1/s). */
 const OPACITY_RATE = 12;
 /** Fingertip radius assumed when the stroke has no hand (the ?test trace). */
 const DEFAULT_PEN_RADIUS = 0.008;
+/** Selecting an item: a straight index fingertip comes down within this of the table (m)… */
+const SELECT_TOUCH = 0.006;
+/** …having been lifted at least this far first. */
+const SELECT_LIFT = 0.015;
 
-const DRAW_TITLE = 'Lay out your materials';
-const DRAW_DETAIL = 'Pinch thumb and index on your table, trace a rectangle (at least 25 × 20 cm), then let go.';
+const DRAW_TITLE = 'Let’s set up your workspace';
+const DRAW_DETAIL =
+  'Look at the space in front of you, below eye level. Pinch thumb and index on the table and trace your mat (at least 25 × 20 cm), then let go.';
 
 const cm = (m: number) => Math.round(m * 100);
 /** Let go within this of a detected table's surface (m), the mat settles flush onto it; otherwise it stays where it was let go. */
 const RETABLE_RANGE = 0.06;
 
-const matWorld = new THREE.Matrix4();
-const matInverse = new THREE.Matrix4();
-const panelLocal = new THREE.Matrix4();
+const local = new THREE.Vector3();
+const inverse = new THREE.Matrix4();
 
 /**
  * The material mat, inside the injury simulation's mixed-reality session:
  * pinch-trace a rectangle on the table and the kit is laid out on it. It
  * adds `root` to the scene and is updated from the scene's XR frames; the
- * session and renderer are the injury simulation's.
+ * session and renderer are the injury simulation's. Its pose is the
+ * workspace frame the menus and Buddy are placed by; the menus drive it
+ * through MatControls.
  */
-export class MatSystem {
+export class MatSystem implements MatControls {
   /** Everything the mat draws; add it to the scene once. */
   readonly root = new THREE.Group();
   private renderer: THREE.WebGLRenderer | null = null;
-  private readonly hint = new HintBoard();
   private readonly hands = new HandTracker();
   private readonly pinches = { left: new PinchDetector(), right: new PinchDetector() };
   private readonly stroke = new StrokeBuffer();
   private readonly strokeView = new StrokeView();
+  private readonly preview = new MatPreview();
   private readonly probe = new SurfaceProbe();
   private readonly mat = new MatView();
-  private readonly panel: ControlPanel;
-  private readonly handList: readonly HandState[];
   private readonly palmUp = new PalmUpToggle();
 
   private session: XRSession | null = null;
@@ -85,12 +91,18 @@ export class MatSystem {
   private lastTime = 0;
   /** The hand drawing the current stroke. */
   private pen: HandState | null = null;
+  private previewAt = 0;
   private restoreWaited = 0;
-  private stepMode = false;
+  private _stepMode = false;
   /** Index of the current item in step mode. */
   private step = 0;
+  /** The item picked by touching it (-1: none). */
+  private selected = -1;
+  private readonly selectArmed = { left: false, right: false };
+  private highlightKey = '';
   private opacityTarget = 1;
   private opacityShown = 1;
+  private prefsVersion = -1;
 
   private anchor: XRAnchor | null = null;
   private readonly anchorSpaces: XRSpace[] = [];
@@ -103,27 +115,15 @@ export class MatSystem {
   private moving = false;
   /** It was put down: anchor it where it is, next frame. */
   private reanchorRequested = false;
-  /** The panel's pose relative to the mat, once moved by hand (else its default place). */
-  private panelPose: number[] | null = null;
-  private panelHeld = false;
-  /** The mat and its control panel, to move with a fist (see GrabSystem). */
+  /** The mat, to move with a fist (see GrabSystem). */
   readonly grabbables: Grabbable[];
 
   private readonly head = new THREE.Vector3();
   private readonly headMatrix = new THREE.Matrix4();
 
   constructor(private readonly events: MatSystemEvents = {}) {
-    this.panel = new ControlPanel({
-      onOpacity: (value, done) => {
-        this.opacityTarget = value;
-        if (done) saveOpacity(value);
-      },
-      onButton: (button) => this.onPanelButton(button),
-    });
-    this.mat.root.add(this.panel.group);
-    this.handList = [this.hands.left, this.hands.right];
-    this.grabbables = [this.matGrabbable(), this.panelGrabbable()];
-    this.root.add(this.hint.group, this.strokeView.group, this.mat.root);
+    this.grabbables = [this.matGrabbable()];
+    this.root.add(this.strokeView.group, this.preview.group, this.mat.root);
     this.root.visible = false;
     if (import.meta.env.DEV) (window as unknown as { __mat?: MatSystem }).__mat = this;
   }
@@ -142,6 +142,7 @@ export class MatSystem {
     }
     this.opacityTarget = this.opacityShown = loadOpacity();
     this.mat.setOpacity(this.opacityShown);
+    this.prefsVersion = -1;
     this.lastTime = 0;
     this.root.visible = true;
     this.resetToDraw();
@@ -156,7 +157,8 @@ export class MatSystem {
     this.renderer = null;
     this.root.visible = false;
     this.mat.setVisible(false);
-    this.hint.hide();
+    this.preview.hide();
+    workspace.frameValid = false;
   }
 
   /** Removes the mat (and its saved anchor) and starts drawing again. */
@@ -173,6 +175,7 @@ export class MatSystem {
       this.events.onSavedMatChange?.(null);
     }
     this.resetToDraw();
+    workspace.flow.matRemoved();
   }
 
   /**
@@ -184,18 +187,79 @@ export class MatSystem {
     if (this.phase === 'draw') this.testTraceRequested = true;
   }
 
+  // MatControls, for the menus.
+
+  get itemCount() {
+    return this.mat.itemCount;
+  }
+
+  get stepMode() {
+    return this._stepMode;
+  }
+
+  get canPrev() {
+    return this._stepMode ? this.step > 0 : this.mat.page > 0;
+  }
+
+  get canNext() {
+    return this._stepMode ? this.step < this.mat.itemCount - 1 : this.mat.page < this.mat.pages - 1;
+  }
+
+  get status() {
+    const count = this.mat.itemCount;
+    if (this._stepMode) {
+      const item = this.kit?.items[this.step];
+      return `Step ${item?.step ?? this.step + 1} of ${count} · ${item?.name ?? ''}`;
+    }
+    if (this.selected >= 0) return `Selected · ${this.kit?.items[this.selected]?.name ?? ''}`;
+    if (this.mat.pages > 1) return `Page ${this.mat.page + 1} of ${this.mat.pages}`;
+    return `All ${count} materials`;
+  }
+
+  get opacity() {
+    return this.opacityTarget;
+  }
+
+  setOpacity(value: number, done: boolean) {
+    this.opacityTarget = Math.min(Math.max(value, 0), 1);
+    if (done) saveOpacity(this.opacityTarget);
+  }
+
+  prev() {
+    this.turn(-1);
+  }
+
+  next() {
+    this.turn(1);
+  }
+
+  toggleStep() {
+    this._stepMode = !this._stepMode;
+    // Start from the selected item, else the first one on the page in view.
+    if (this._stepMode) this.step = this.selected >= 0 ? this.selected : Math.max(this.firstItemOnPage(this.mat.page), 0);
+    this.refreshHighlight(true);
+  }
+
+  private turn(delta: number) {
+    if (this._stepMode) this.step = Math.min(Math.max(this.step + delta, 0), this.mat.itemCount - 1);
+    else this.mat.setPage(this.mat.page + delta);
+    this.refreshHighlight(true);
+  }
+
   private resetToDraw() {
     this.generation++;
     this.moving = false;
     this.reanchorRequested = false;
-    this.panelPose = null;
     this.phase = 'draw';
-    this.stepMode = false;
+    this._stepMode = false;
+    this.selected = -1;
     this.pen = null;
     this.stroke.reset();
     this.probe.cancel();
+    this.preview.hide();
     this.mat.setVisible(false);
-    this.hint.show(DRAW_TITLE, DRAW_DETAIL, DRAW_HINT_TIME);
+    workspace.frameValid = false;
+    workspace.notify(DRAW_TITLE, DRAW_DETAIL, 'info', Infinity);
   }
 
   /** Per XR frame, before the scene renders. `time` in ms. */
@@ -208,6 +272,7 @@ export class MatSystem {
     this.hands.update(frame, space);
     const leftEvent = this.pinches.left.update(this.hands.left.tracked ? this.hands.left.pinchDistance : null, dt);
     const rightEvent = this.pinches.right.update(this.hands.right.tracked ? this.hands.right.pinchDistance : null, dt);
+    this.applyPrefs();
 
     switch (this.phase) {
       case 'draw':
@@ -221,6 +286,7 @@ export class MatSystem {
         const hand = this.pen!;
         if (hand.tracked) this.stroke.add(hand.pen.x, hand.pen.y, hand.pen.z);
         this.strokeView.sync(this.stroke);
+        if (this.stroke.count >= this.previewAt + PREVIEW_EVERY) this.updatePreview();
         const event = hand === this.hands.right ? rightEvent : leftEvent;
         if (event === 'end') this.finishStroke(frame, space);
         break;
@@ -234,9 +300,11 @@ export class MatSystem {
         this.restoreWaited += dt;
         if (this.trackAnchor(frame, space)) {
           this.phase = 'placed';
-          this.showControls();
           this.mat.setVisible(true);
-          this.hint.show('Found your last mat', `${cm(this.mat.width)} × ${cm(this.mat.depth)} cm`, 3);
+          this.mat.pulse();
+          uiSound.success();
+          workspace.notify('Found your last mat', `${cm(this.mat.width)} × ${cm(this.mat.depth)} cm`, 'ok', 3);
+          workspace.flow.matPlaced();
         } else if (this.restoreWaited > RESTORE_TIMEOUT) {
           this.restoreFailed();
         }
@@ -247,23 +315,45 @@ export class MatSystem {
         this.updateControls(dt);
         break;
     }
-    this.mat.update(this.head, time / 1000);
-
+    if (this.phase === 'placed' && this.mat.root.visible) {
+      this.mat.root.updateMatrixWorld();
+      workspace.setFrame(this.mat.root.matrixWorld, this.mat.width, this.mat.depth);
+    }
+    this.mat.update(dt, time / 1000);
     this.strokeView.update(dt);
-    this.hint.update(dt, this.head, this.headMatrix);
+  }
+
+  /** The look settings from the menus: mat colour and the labels toggle. */
+  private applyPrefs() {
+    if (this.prefsVersion === xrPrefs.version) return;
+    this.prefsVersion = xrPrefs.version;
+    this.mat.setAccent(MAT_ACCENTS[xrPrefs.matAccent]?.color ?? MAT_ACCENTS[0].color);
+    this.mat.setLabelsVisible(xrPrefs.labels);
   }
 
   private beginStroke(hand: HandState) {
     this.pen = hand;
     this.phase = 'drawing';
+    this.previewAt = 0;
     this.stroke.reset();
     this.stroke.add(hand.pen.x, hand.pen.y, hand.pen.z);
     this.strokeView.begin();
-    this.hint.hide();
+    workspace.notify('Tracing your mat…', 'Go all the way round, then let go.', 'info', Infinity);
+  }
+
+  /** The rectangle the stroke so far would make, drawn as a ghost with its size. */
+  private updatePreview() {
+    this.previewAt = this.stroke.count;
+    const rect = fitRectangle(this.stroke.positions, this.stroke.count);
+    if (!rect) return;
+    const placement = orientToViewer(rect, this.head.x, this.head.z);
+    const y = surfaceFromPen(medianY(this.stroke.positions, this.stroke.count), this.pen?.penRadius ?? DEFAULT_PEN_RADIUS);
+    this.preview.show(placement, y, isBigEnough(placement.width, placement.depth), this.head);
   }
 
   /** Works out the table height under the stroke: a detected plane, else hit test, else the pen. */
   private finishStroke(frame: XRFrame, space: XRReferenceSpace) {
+    this.preview.hide();
     if (this.stroke.count < MIN_STROKE_POINTS) {
       this.strokeView.fadeOut();
       this.resetToDraw();
@@ -278,6 +368,7 @@ export class MatSystem {
     }
     if (this.session && this.probe.begin(this.session, space, x, penY, z)) {
       this.phase = 'settling';
+      workspace.notify('Finding the table…', '', 'info', Infinity);
       return;
     }
     this.place(frame, space, this.penSurface());
@@ -329,7 +420,6 @@ export class MatSystem {
     }
     this.strokeView.begin();
     this.strokeView.sync(this.stroke);
-    this.hint.hide();
     this.finishStroke(frame, space);
   }
 
@@ -356,21 +446,26 @@ export class MatSystem {
     const placement = orientToViewer(rect, this.head.x, this.head.z);
     if (!isBigEnough(placement.width, placement.depth)) {
       this.resetToDraw();
-      this.hint.show(
+      uiSound.alert();
+      workspace.notify(
         `Too small: ${cm(placement.width)} × ${cm(placement.depth)} cm`,
         'Draw at least 25 × 20 cm. Pinch and trace again.',
-        Infinity,
         'warn',
+        Infinity,
       );
       return;
     }
     this.showMat(placement, y);
     this.anchorMat(frame, space, placement.cx, y, placement.cz, placement.yaw);
-    this.hint.show(
+    this.mat.pulse();
+    uiSound.success();
+    workspace.notify(
       `Mat placed · ${cm(placement.width)} × ${cm(placement.depth)} cm`,
-      'Put each item on its outline.',
+      'To move it later, make a fist on its edge.',
+      'ok',
       4,
     );
+    workspace.flow.matPlaced();
   }
 
   private showMat(placement: MatPlacement, y: number) {
@@ -378,20 +473,10 @@ export class MatSystem {
     this.mat.setPose(placement.cx, y, placement.cz, placement.yaw);
     this.mat.setVisible(true);
     this.phase = 'placed';
-    this.showControls();
+    this.highlightKey = '';
   }
 
-  private showControls() {
-    this.panel.placeFor(this.mat.width, this.mat.depth);
-    if (this.panelPose) {
-      panelLocal.fromArray(this.panelPose);
-      panelLocal.decompose(this.panel.group.position, this.panel.group.quaternion, this.panel.group.scale);
-    }
-    this.panel.group.visible = true;
-    this.refreshPanel();
-  }
-
-  /** Per frame while the mat is down: panel pokes, the palm-up toggle, the opacity fade. */
+  /** Per frame while the mat is down: touching items, the palm-up toggle, highlights, the opacity fade. */
   private updateControls(dt: number) {
     // The palm without the wound: turning the wound's palm up is someone
     // looking at the wound, and must never hide the controls.
@@ -399,11 +484,16 @@ export class MatSystem {
     const free = this.hands[freeSide];
     const busy = !free.tracked || free.pinchDistance < 0.03 || !this.hands[xrPrefs.hand].tracked;
     if (this.palmUp.update(busy ? null : free.palmNormal.y, dt)) {
-      this.panel.group.visible = !this.panel.group.visible;
-      if (!this.panel.group.visible) this.hint.show('Controls hidden', `Turn your ${freeSide} palm up again to bring them back.`, 3);
-      else this.hint.hide();
+      workspace.panelsHidden = !workspace.panelsHidden;
+      workspace.notify(
+        workspace.panelsHidden ? 'Menus hidden' : 'Menus back',
+        workspace.panelsHidden ? `Turn your ${freeSide} palm up again to bring them back.` : '',
+        'info',
+        3,
+      );
     }
-    if (this.panel.group.visible && !this.panelHeld) this.panel.update(dt, this.handList);
+    this.pickItems();
+    this.refreshHighlight(false);
     if (this.opacityShown !== this.opacityTarget) {
       this.opacityShown += (this.opacityTarget - this.opacityShown) * (1 - Math.exp(-OPACITY_RATE * dt));
       if (Math.abs(this.opacityShown - this.opacityTarget) < 0.003) this.opacityShown = this.opacityTarget;
@@ -411,53 +501,62 @@ export class MatSystem {
     }
   }
 
-  private onPanelButton(button: PanelButton) {
-    const count = this.mat.itemCount;
-    switch (button) {
-      case 'redraw':
-        this.redraw();
-        return;
-      case 'step':
-        this.stepMode = !this.stepMode;
-        // Start from the first item on the page in view.
-        if (this.stepMode) this.step = Math.max(this.firstItemOnPage(this.mat.page), 0);
-        break;
-      case 'prev':
-      case 'next': {
-        const delta = button === 'next' ? 1 : -1;
-        if (this.stepMode) this.step = Math.min(Math.max(this.step + delta, 0), count - 1);
-        else this.mat.setPage(this.mat.page + delta);
-        break;
+  /**
+   * Touching an item with a straight index fingertip selects it (shows its
+   * purpose); touching it again lets go. A fist never selects, so carrying
+   * the mat can't pick things by accident.
+   */
+  private pickItems() {
+    const phase = workspace.flow.phase;
+    if (phase !== 'browse' && phase !== 'work') return;
+    this.mat.root.updateMatrixWorld();
+    inverse.copy(this.mat.root.matrixWorld).invert();
+    for (const hand of [this.hands.left, this.hands.right]) {
+      const side = hand.handedness;
+      if (!hand.tracked || !hand.indexStraight || hand.pinchDistance < 0.03 || this.moving) {
+        this.selectArmed[side] = false;
+        continue;
       }
+      local.copy(hand.indexTip).applyMatrix4(inverse);
+      const height = local.y - hand.indexTipRadius;
+      if (height > SELECT_LIFT) {
+        this.selectArmed[side] = true;
+        continue;
+      }
+      if (!this.selectArmed[side] || height > SELECT_TOUCH || height < -0.03) continue;
+      const hit = this.mat.hitSlot(local.x, local.z);
+      if (hit < 0) continue;
+      this.selectArmed[side] = false;
+      this.selected = this.selected === hit ? -1 : hit;
+      if (this._stepMode && this.selected >= 0) this.step = this.selected;
+      uiSound.press();
+      const item = this.kit?.items[hit];
+      if (this.selected >= 0 && item) workspace.notify(item.name, item.purpose, 'ok', 3);
     }
-    this.mat.setActiveStep(this.stepMode ? this.step : -1);
-    this.refreshPanel();
+  }
+
+  /**
+   * What's highlighted: in step mode the current step (others dimmed);
+   * while working, the items the current build stage uses; else the
+   * selected item.
+   */
+  private refreshHighlight(force: boolean) {
+    const stage = workspace.flow.phase === 'work' ? (woundLink.flow?.stage ?? 0) : 0;
+    const key = `${this._stepMode}:${this.step}:${stage}:${this.selected}`;
+    if (!force && key === this.highlightKey) return;
+    this.highlightKey = key;
+    if (this._stepMode) this.mat.setHighlight([this.step], true);
+    else if (stage > 0 && this.kit) {
+      const used: number[] = [];
+      this.kit.items.forEach((item, i) => item.stages.includes(stage) && used.push(i));
+      if (this.selected >= 0 && !used.includes(this.selected)) used.push(this.selected);
+      this.mat.setHighlight(used, false);
+    } else this.mat.setHighlight(this.selected >= 0 ? [this.selected] : [], false);
   }
 
   private firstItemOnPage(page: number) {
     for (let i = 0; i < this.mat.itemCount; i++) if (this.mat.pageOf(i) === page) return i;
     return -1;
-  }
-
-  private refreshPanel() {
-    const count = this.mat.itemCount;
-    const { page, pages } = this.mat;
-    let status: string;
-    if (this.stepMode) {
-      const item = this.kit?.items[this.step];
-      status = `Step ${item?.step ?? this.step + 1} of ${count} · ${item?.name ?? ''}`;
-    } else if (pages > 1) {
-      status = `Page ${page + 1} of ${pages} · ${this.kit?.title ?? ''}`;
-    } else {
-      status = `All ${count} items · ${this.kit?.title ?? ''}`;
-    }
-    this.panel.setState({
-      opacity: this.opacityTarget,
-      stepMode: this.stepMode,
-      canPrev: this.stepMode ? this.step > 0 : page > 0,
-      canNext: this.stepMode ? this.step < count - 1 : page < pages - 1,
-      status,
-    });
   }
 
   /** Locks the mat to the table with an anchor (kept across sessions when supported). */
@@ -490,7 +589,7 @@ export class MatSystem {
         if (generation !== this.generation) return;
         if (previous && previous !== handle) void this.session?.deletePersistentAnchor?.(previous).catch(() => {});
         this.savedHandle = handle;
-        const saved = { handle, width, depth, savedAt: Date.now(), panel: this.panelPose ?? undefined };
+        const saved = { handle, width, depth, savedAt: Date.now() };
         saveMat(saved);
         this.events.onSavedMatChange?.(saved);
       },
@@ -507,10 +606,8 @@ export class MatSystem {
     this.phase = 'restoring';
     this.restoreWaited = 0;
     this.savedHandle = saved.handle;
-    this.panelPose = saved.panel ?? null;
     this.mat.build(saved.width, saved.depth);
-    this.panel.group.visible = false;
-    this.hint.show('Finding your last mat…', 'Look at the table where you left it.');
+    workspace.notify('Finding your last mat…', 'Look at the table where you left it.', 'info', Infinity);
     session.restorePersistentAnchor(saved.handle).then(
       (anchor) => {
         if (generation !== this.generation) anchor.delete();
@@ -527,7 +624,7 @@ export class MatSystem {
     this.anchor?.delete();
     this.anchor = null;
     this.resetToDraw();
-    this.hint.show('Couldn’t find your last mat here', 'Pinch and trace a new one.', DRAW_HINT_TIME, 'warn');
+    workspace.notify('Couldn’t find your last mat here', 'Pinch and trace a new one on your table.', 'warn', Infinity);
   }
 
   /**
@@ -580,49 +677,10 @@ export class MatSystem {
       end: () => {
         this.moving = false;
         this.reanchorRequested = true;
+        uiSound.release();
       },
       setGrabState: (state: GrabState) => this.mat.setGrabState(state),
     };
-  }
-
-  /** The control panel: carry it anywhere; it stays put relative to the mat. */
-  private panelGrabbable(): Grabbable {
-    const group = this.panel.group;
-    return {
-      bounds: new THREE.Box3(
-        new THREE.Vector3(-PANEL_SIZE.width / 2, -PANEL_SIZE.height / 2, -0.03),
-        new THREE.Vector3(PANEL_SIZE.width / 2, PANEL_SIZE.height / 2, 0.03),
-      ),
-      style: 'panel',
-      canGrab: () => this.phase === 'placed' && this.mat.root.visible && group.visible,
-      worldMatrix: (out) => {
-        group.updateWorldMatrix(true, false);
-        out.copy(group.matrixWorld);
-      },
-      begin: () => {
-        this.panelHeld = true;
-      },
-      move: (world) => {
-        this.mat.root.updateMatrixWorld();
-        matInverse.copy(this.mat.root.matrixWorld).invert();
-        matWorld.multiplyMatrices(matInverse, world);
-        matWorld.decompose(group.position, group.quaternion, group.scale);
-      },
-      end: () => {
-        this.panelHeld = false;
-        group.updateMatrix();
-        this.panelPose = group.matrix.toArray();
-        this.savePanel();
-      },
-      setGrabState: (state: GrabState) => this.panel.setGrabState(state),
-    };
-  }
-
-  /** Remembers where the panel was moved, with the saved mat. */
-  private savePanel() {
-    const saved = loadSavedMat();
-    if (!saved || saved.handle !== this.savedHandle) return;
-    saveMat({ ...saved, panel: this.panelPose ?? undefined });
   }
 
   /** Moves the mat to its anchor's latest pose. Returns whether the anchor is tracked. */

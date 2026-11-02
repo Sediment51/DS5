@@ -135,6 +135,8 @@ export class BuddyMotion {
 
   mode: 'rest' | 'travel' | 'orbit' = 'rest';
   asleep = false;
+  /** Calm: no idle flourishes or glances, and half the drift, so it never draws the eye while you work. */
+  calm = false;
   private started = false;
   private readonly body = new THREE.Vector3();
   private readonly vel = new THREE.Vector3();
@@ -206,6 +208,23 @@ export class BuddyMotion {
     this.position.copy(this.body);
     this.started = true;
     this.startTrip(MAX_SPEED, false);
+  }
+
+  /** Carried by hand: it's exactly here, at rest (the caller makes this its home too). */
+  place(position: THREE.Vector3) {
+    this.mode = 'rest';
+    this.visit = 'none';
+    this.endFlourish();
+    this.body.copy(position);
+    this.anchor.copy(position);
+    this.position.copy(position);
+    this.vel.set(0, 0, 0);
+    this.settle.set(0, 0, 0);
+    this.settleVel.set(0, 0, 0);
+    this.reactIn = -1;
+    this.dipT = -1;
+    this.tripLong = false;
+    this.started = true;
   }
 
   /** New step: fly to hover over the wound, hold, then glide home. */
@@ -473,7 +492,7 @@ export class BuddyMotion {
     // Speed: drift fades out while flying.
     const speed = this.vel.length();
     this.speed01 = Math.min(speed / MAX_SPEED, 1);
-    const calm = 1 - this.speed01;
+    const calm = (1 - this.speed01) * (this.calm ? 0.5 : 1);
     const t = this.time * DRIFT_HZ;
     const drift = (DRIFT_CM / 100) * calm;
     pos.x += drift * noise(t, 1);
@@ -490,7 +509,7 @@ export class BuddyMotion {
     const resting = this.mode === 'rest' && this.visit === 'none' && !this.asleep && this.reactIn < 0;
     if (this.flourish === 'none') {
       this.nextFlourish -= dt;
-      if (this.nextFlourish <= 0 && resting && input.idle) {
+      if (this.nextFlourish <= 0 && resting && input.idle && !this.calm) {
         this.flourish = Math.random() < 0.5 ? 'loop' : 'hop';
         this.flourishT = 0;
         this.nextFlourish = rand(FLOURISH_INTERVAL_S);
@@ -513,7 +532,7 @@ export class BuddyMotion {
     }
 
     // Where to look: the way it's flying, a glance at the hand, the wound before a pinch, else the viewer.
-    if (resting) {
+    if (resting && !this.calm) {
       this.nextGlance -= dt;
       if (this.nextGlance <= 0) {
         this.nextGlance = rand(GLANCE_INTERVAL_S);

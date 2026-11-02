@@ -26,6 +26,17 @@
         "purpose": { "type": "string", "minLength": 1, "description": "Shown large for the active step in step mode." },
         "quantity": { "type": "string", "minLength": 1, "description": "Shown large on the mat." },
         "footprint": { "$ref": "#/$defs/footprint" },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "description": "Optional: related items share a group; each group starts a new row on the mat."
+        },
+        "stages": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 20 },
+          "description": "Optional: the build stages (1–6) this item is used in; they light up on the mat during those steps."
+        },
         "quantityVisual": {
           "description": "Optional true-scale model of the amount, next to the outline.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quantityVisual" }]

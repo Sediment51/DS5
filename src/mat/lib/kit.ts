@@ -24,6 +24,10 @@ export interface KitItemJson {
   quantity: string;
   footprint: FootprintJson;
   quantityVisual?: QuantityVisualJson | null;
+  /** Related items share a group; each group starts a new row. */
+  group?: string;
+  /** Build stages (1–6) the item is used in. */
+  stages?: number[];
 }
 
 export interface KitJson {
@@ -55,6 +59,9 @@ export interface KitItem {
   quantity: string;
   footprint: Footprint;
   visual: QuantityVisual | null;
+  group: string | null;
+  /** Build stages it's used in (empty: none given). */
+  stages: number[];
 }
 
 export interface Kit {
@@ -70,6 +77,8 @@ const CM = 0.01;
 export const MAX_ITEMS = 64;
 /** Anything bigger than this (cm) is surely a typo. */
 const MAX_SIZE_CM = 200;
+const MAX_GROUP_LENGTH = 24;
+const MAX_STAGE = 20;
 /** Volume of one drop if not given (ml). */
 const DEFAULT_DROP_ML = 0.05;
 /** Gap between drops (m). */
@@ -110,6 +119,18 @@ export function parseKit(json: unknown): KitResult {
     }
     const footprint = parseFootprint(raw.footprint, fail);
     const visual = raw.quantityVisual == null ? null : parseVisual(raw.quantityVisual, fail);
+    let group: string | null = null;
+    if (raw.group !== undefined) {
+      if (typeof raw.group !== 'string' || !raw.group.trim() || raw.group.trim().length > MAX_GROUP_LENGTH) {
+        fail(`"group" must be a short name (1 to ${MAX_GROUP_LENGTH} characters).`);
+      } else group = raw.group.trim();
+    }
+    let stages: number[] = [];
+    if (raw.stages !== undefined) {
+      if (!Array.isArray(raw.stages) || !raw.stages.every((s) => Number.isInteger(s) && s >= 1 && s <= MAX_STAGE)) {
+        fail(`"stages" must be a list of stage numbers from 1 to ${MAX_STAGE}.`);
+      } else stages = [...new Set(raw.stages as number[])];
+    }
     if (typeof id === 'string' && footprint && visual !== undefined && typeof raw.step === 'number') {
       items.push({
         id,
@@ -119,6 +140,8 @@ export function parseKit(json: unknown): KitResult {
         quantity: String(raw.quantity).trim(),
         footprint,
         visual,
+        group,
+        stages,
       });
     }
   });

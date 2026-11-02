@@ -43,4 +43,11 @@ export const uiSound = {
   release: () => blip(700, 0.06, 0.08),
   /** A slider passing a step. */
   tick: () => blip(1900, 0.02, 0.04),
+  /** Something done: the mat placed, a step finished (two rising notes). */
+  success: () => {
+    blip(990, 0.09, 0.1);
+    window.setTimeout(() => blip(1480, 0.14, 0.1), 90);
+  },
+  /** Something needs attention: tracking lost. */
+  alert: () => blip(520, 0.16, 0.09),
 };

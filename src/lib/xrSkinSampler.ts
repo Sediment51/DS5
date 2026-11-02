@@ -95,6 +95,53 @@ export class XRSkinSampler {
     return true;
   }
 
+  /**
+   * A photo from the headset camera (the first view's image), scaled to at
+   * most `maxSize` pixels on its long side, as a JPEG data URL; null without
+   * camera access. Call inside an XR frame.
+   */
+  captureImage(renderer: THREE.WebGLRenderer, maxSize: number): string | null {
+    const frame = renderer.xr.getFrame();
+    const space = renderer.xr.getReferenceSpace();
+    if (!frame || !space) return null;
+    const view = frame.getViewerPose(space)?.views[0] as CameraView | undefined;
+    const camera = view?.camera;
+    if (!view || !camera) return null;
+    const binding = renderer.xr.getBinding() as CameraBinding | null;
+    const texture = binding?.getCameraImage?.(camera);
+    if (!texture) return null;
+    this.available = true;
+
+    const { width, height } = camera;
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    this.fbo ??= gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    let pixels: Uint8ClampedArray | null = null;
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE) {
+      pixels = new Uint8ClampedArray(width * height * 4);
+      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    renderer.resetState();
+    if (!pixels) return null;
+
+    // GL rows run bottom to top: flip them so the photo is upright.
+    const full = document.createElement('canvas');
+    full.width = width;
+    full.height = height;
+    const image = new ImageData(width, height);
+    const row = width * 4;
+    for (let y = 0; y < height; y++) image.data.set(pixels.subarray((height - 1 - y) * row, (height - y) * row), y * row);
+    full.getContext('2d')!.putImageData(image, 0, 0);
+    const scale = Math.min(1, maxSize / Math.max(width, height));
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(width * scale));
+    out.height = Math.max(1, Math.round(height * scale));
+    out.getContext('2d')!.drawImage(full, 0, 0, out.width, out.height);
+    return out.toDataURL('image/jpeg', 0.85);
+  }
+
   /** Adds the mean colour of a block at (x, y) to orientation o's sums. */
   private read(gl: WebGL2RenderingContext, x: number, y: number, width: number, height: number, o: number) {
     x = THREE.MathUtils.clamp(x, 0, width - BLOCK);
