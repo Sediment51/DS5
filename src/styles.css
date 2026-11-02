@@ -383,6 +383,28 @@ button {
   background: transparent;
 }
 
+.xr-camera {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.xr-camera p {
+  margin: 0;
+}
+
+.xr-camera-ok {
+  font-weight: 600;
+  color: var(--mint-strong);
+}
+
+.xr-camera-warn {
+  font-size: 13px;
+  color: #8a5a00;
+}
+
 .xr-reset {
   display: flex;
   flex-direction: column;

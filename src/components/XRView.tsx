@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { resetDemo } from '../lib/demoReset';
+import { checkCameraPermission, headsetCamera, startHeadsetCamera } from '../lib/headsetCamera';
 import { loadWoundOpacity, saveWoundOpacity } from '../lib/woundOpacity';
 import { KitSummary } from '../mat/KitSummary';
 import { loadKit, type KitResult } from '../mat/lib/kit';
@@ -68,6 +69,51 @@ function QuestBrowserSteps() {
         </button>
       </details>
     </>
+  );
+}
+
+/**
+ * The headset camera for Check my work: Quest Browser gives websites its
+ * cameras only with the "Headset cameras" permission, asked for here on the
+ * page (asking inside the headset view would drop out of it).
+ */
+function CameraAccess() {
+  const [, setVersion] = useState(0);
+  const [asking, setAsking] = useState(false);
+  const refresh = () => setVersion(headsetCamera.version);
+  useEffect(() => {
+    void checkCameraPermission().then(refresh);
+  }, []);
+  const allow = async () => {
+    setAsking(true);
+    await startHeadsetCamera();
+    setAsking(false);
+    refresh();
+  };
+  const status = headsetCamera.status;
+  return (
+    <div className="xr-camera" role="status">
+      {status === 'granted' ? (
+        <p className="xr-camera-ok">✓ Camera allowed: Buddy can check your work.</p>
+      ) : status === 'denied' ? (
+        <p className="xr-camera-warn">
+          ⚠ The camera is blocked for this site. Tap the lock icon left of the address bar →{' '}
+          <strong>Headset cameras</strong> → <strong>Allow</strong>, then reload.
+        </p>
+      ) : status === 'unsupported' ? (
+        <p className="xr-camera-warn">
+          ⚠ This browser doesn’t give websites the headset cameras. Update Quest Browser (Settings → General →
+          Software update), then reload.
+        </p>
+      ) : (
+        <>
+          <button type="button" className="panel button" onClick={allow} disabled={asking}>
+            {asking ? 'Asking…' : 'Allow camera'}
+          </button>
+          <p className="xr-note">So Buddy can see your work (Check my work). Choose Allow when asked.</p>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -320,6 +366,7 @@ export function XRView({ onExit }: XRViewProps) {
                 </button>
               )}
             </div>
+            {support.ar && <CameraAccess />}
             <ResetDemo onReset={() => setWoundOpacity(1)} />
           </>
         ) : (

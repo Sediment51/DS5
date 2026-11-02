@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { XREstimatedLight } from 'three/examples/jsm/webxr/XREstimatedLight.js';
+import { captureHeadsetCamera, headsetCamera } from '../lib/headsetCamera';
 import { mentor, requestFeedback } from '../lib/mentorAnalysis';
 import { uiSound } from '../lib/uiSound';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
@@ -495,9 +496,14 @@ export function XRWound({ strength }: XRWoundProps) {
     // Mentor feedback: the photo is taken here, inside the XR frame (the camera image is only readable now).
     if (mentor.captureRequested) {
       mentor.captureRequested = false;
-      const photo = state.sampler.captureImage(gl, PHOTO_SIZE);
+      // The WebXR camera image if the browser gives it, else the headset cameras (Quest Browser's way).
+      const photo = state.sampler.captureImage(gl, PHOTO_SIZE) ?? captureHeadsetCamera(PHOTO_SIZE);
       if (photo) void requestFeedback(photo, state.flow.stage, STAGE_LABELS[state.flow.stage] ?? '');
-      else mentor.set('error', 'I can’t see through the headset camera here: this browser didn’t allow camera access.');
+      else {
+        mentor.set('error', headsetCamera.status === 'unsupported'
+          ? 'This browser doesn’t give websites the headset cameras. Update Quest Browser.'
+          : 'Allow the camera: exit, tap Allow camera on the page (or lock icon → Headset cameras → Allow).');
+      }
     }
     const fade = state.lostFor <= HOLD_SECONDS ? 1 : 1 - (state.lostFor - HOLD_SECONDS) / FADE_SECONDS;
     const opacity = state.placed ? THREE.MathUtils.clamp(fade, 0, 1) * THREE.MathUtils.clamp(strength.current ?? 1, 0, 1) : 0;

@@ -3,6 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GrabSystem } from '../lib/grab';
 import { createHandPose, type HandPose } from '../lib/handPose';
+import { startHeadsetCameraIfAllowed, stopHeadsetCamera } from '../lib/headsetCamera';
 import { checkMentorService } from '../lib/mentorAnalysis';
 import { workspace } from '../lib/workspaceFlow';
 import { GrabController } from './GrabController';
@@ -132,8 +133,13 @@ function FlowDriver({ mode, withMat }: { mode: XRMode | null; withMat: boolean }
     workspace.reset();
     workspace.flow.start(withMat);
     s.needsFrame = mode !== null && !withMat;
-    if (mode !== null) void checkMentorService();
+    if (mode !== null) {
+      void checkMentorService();
+      // The headset camera, for Check my work: started only if already allowed (no prompt in the headset).
+      if (mode === 'ar') void startHeadsetCameraIfAllowed();
+    } else stopHeadsetCamera();
   }, [mode, withMat, s]);
+  useEffect(() => () => stopHeadsetCamera(), []);
 
   useFrame((_, delta) => {
     workspace.flow.update(delta);
