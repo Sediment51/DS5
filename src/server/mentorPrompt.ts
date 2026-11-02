@@ -16,6 +16,11 @@ export interface MentorService {
 
 /** Google Gemini: the default model, and the generateContent endpoint (the key goes in `?key=`). */
 export const GEMINI_MODEL = 'gemini-3.8-flash';
+/** Asked in turn instead when a model is overloaded (HTTP 503 / 500): the previous stable Flash, then Flash-Lite. */
+export const GEMINI_FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash-lite'] as const;
+
+/** Whether a Gemini failure is "busy right now" (worth one try on another model). */
+export const geminiOverloaded = (status: number) => status === 503 || status === 500;
 export const geminiUrl = (model: string) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 

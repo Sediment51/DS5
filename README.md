@@ -151,8 +151,9 @@ app's own dev server (`/api/mentor`), which asks the AI service; the API key
 stays on the laptop.
 
 - **Google Gemini** (used when `GEMINI_API_KEY` is set): `gemini-3.8-flash`
-  by default; set `GEMINI_MODEL` to use another. Get a key at
-  https://aistudio.google.com/apikey.
+  by default; set `GEMINI_MODEL` to use another. When a model is overloaded
+  ("high demand", HTTP 503), it asks `gemini-3.6-flash`, then
+  `gemini-3.5-flash-lite`. Get a key at https://aistudio.google.com/apikey.
 - **Anthropic Claude** (used when only `ANTHROPIC_API_KEY` is set):
   `claude-opus-5-5`, low effort, with server-side fallback.
 

@@ -1,11 +1,13 @@
 import {
   ANTHROPIC_VERSION,
   FALLBACK_BETA,
+  GEMINI_FALLBACK_MODELS,
   MESSAGES_URL,
   buildGeminiRequest,
   buildMessagesRequest,
   describeApiError,
   describeGeminiError,
+  geminiOverloaded,
   geminiUrl,
   parseMentorRequest,
   readFeedback,
@@ -121,19 +123,32 @@ async function handle(req: Request, res: Response, service: MentorService | null
 
 type Answer = { feedback: string } | { error: string };
 
-/** Google Gemini's generateContent (the key goes in the query; the URL is never logged). */
+/**
+ * Google Gemini's generateContent (the key goes in the query; the URL is
+ * never logged). If the model is overloaded, asks the fallback models in turn.
+ */
 async function askGemini(service: MentorService, req: MentorRequest): Promise<Answer> {
-  const response = await fetch(`${geminiUrl(service.model)}?key=${encodeURIComponent(service.apiKey)}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(buildGeminiRequest(req)),
-    signal: AbortSignal.timeout(API_TIMEOUT),
-  });
-  const json: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    console.error(`[mentor] Gemini error ${response.status} (model ${service.model})`, json);
-    return { error: describeGeminiError(response.status, json) };
+  const call = async (model: string) => {
+    const response = await fetch(`${geminiUrl(model)}?key=${encodeURIComponent(service.apiKey)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(buildGeminiRequest(req)),
+      signal: AbortSignal.timeout(API_TIMEOUT),
+    });
+    const json: unknown = await response.json().catch(() => null);
+    if (!response.ok) console.error(`[mentor] Gemini error ${response.status} (model ${model})`, json);
+    return { response, json };
+  };
+  let model = service.model;
+  let { response, json } = await call(model);
+  for (const fallback of GEMINI_FALLBACK_MODELS) {
+    if (response.ok || !geminiOverloaded(response.status)) break;
+    if (fallback === service.model) continue;
+    console.warn(`[mentor] ${model} is busy; trying ${fallback}`);
+    model = fallback;
+    ({ response, json } = await call(model));
   }
+  if (!response.ok) return { error: describeGeminiError(response.status, json) };
   const result = readGeminiFeedback(json);
   if ('error' in result) console.warn('[mentor] Gemini gave no feedback', json);
   return result;
