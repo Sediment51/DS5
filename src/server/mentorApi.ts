@@ -2,18 +2,24 @@ import {
   ANTHROPIC_VERSION,
   FALLBACK_BETA,
   MESSAGES_URL,
+  buildGeminiRequest,
   buildMessagesRequest,
   describeApiError,
+  describeGeminiError,
+  geminiUrl,
   parseMentorRequest,
   readFeedback,
+  readGeminiFeedback,
+  type MentorRequest,
+  type MentorService,
 } from './mentorPrompt.ts';
 
 /**
  * The mentor endpoint on the dev (and preview) server: GET /api/mentor says
  * whether feedback is set up; POST /api/mentor takes { image, stage,
  * stageLabel } and returns { feedback } or { error }. The API key stays on
- * the laptop (ANTHROPIC_API_KEY in .env.local); the headset only ever talks
- * to this server.
+ * the laptop (GEMINI_API_KEY or ANTHROPIC_API_KEY in .env.local); the
+ * headset only ever talks to this server.
  */
 
 /** The parts of Node's request and response used here (the project has no Node typings). */
@@ -64,29 +70,29 @@ function readBody(req: Request, limit: number): Promise<string> {
   });
 }
 
-export function mentorMiddleware(apiKey: string | undefined) {
-  const key = apiKey?.trim() || undefined;
+/** @param service the AI service to ask (null: not set up). */
+export function mentorMiddleware(service: MentorService | null) {
   return (req: Request, res: Response, next: () => void) => {
     const path = (req.url ?? '').split('?')[0];
     if (!path.endsWith('/api/mentor')) {
       next();
       return;
     }
-    void handle(req, res, key);
+    void handle(req, res, service);
   };
 }
 
-async function handle(req: Request, res: Response, key: string | undefined) {
+async function handle(req: Request, res: Response, service: MentorService | null) {
   if (req.method === 'GET') {
-    send(res, 200, { ok: true, configured: key !== undefined });
+    send(res, 200, { ok: true, configured: service !== null, provider: service?.provider ?? null });
     return;
   }
   if (req.method !== 'POST') {
     send(res, 405, { error: 'Use GET or POST.' });
     return;
   }
-  if (!key) {
-    send(res, 503, { error: 'Mentor feedback isn’t set up: add ANTHROPIC_API_KEY to .env.local on the laptop and restart the app.' });
+  if (!service) {
+    send(res, 503, { error: 'Mentor feedback isn’t set up: add GEMINI_API_KEY to .env.local on the laptop and restart the app.' });
     return;
   }
   let body: unknown;
@@ -102,30 +108,54 @@ async function handle(req: Request, res: Response, key: string | undefined) {
     return;
   }
   try {
-    const response = await fetch(MESSAGES_URL, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': ANTHROPIC_VERSION,
-        'anthropic-beta': FALLBACK_BETA,
-      },
-      body: JSON.stringify(buildMessagesRequest(parsed)),
-      signal: AbortSignal.timeout(API_TIMEOUT),
-    });
-    const json: unknown = await response.json().catch(() => null);
-    if (!response.ok) {
-      console.error(`[mentor] Messages API error ${response.status}`, json);
-      send(res, 502, { error: describeApiError(response.status) });
-      return;
-    }
-    const result = readFeedback(json);
+    const result = service.provider === 'gemini' ? await askGemini(service, parsed) : await askClaude(service, parsed);
     send(res, 'error' in result ? 502 : 200, result);
   } catch (err) {
-    console.error('[mentor] Request to the Messages API failed', err);
+    console.error(`[mentor] Request to ${service.provider} failed`, err);
     const timedOut = err instanceof DOMException && err.name === 'TimeoutError';
     send(res, 504, {
       error: timedOut ? 'The AI service took too long. Try again.' : 'The laptop couldn’t reach the AI service. Check its internet connection.',
     });
   }
+}
+
+type Answer = { feedback: string } | { error: string };
+
+/** Google Gemini's generateContent (the key goes in the query; the URL is never logged). */
+async function askGemini(service: MentorService, req: MentorRequest): Promise<Answer> {
+  const response = await fetch(`${geminiUrl(service.model)}?key=${encodeURIComponent(service.apiKey)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(buildGeminiRequest(req)),
+    signal: AbortSignal.timeout(API_TIMEOUT),
+  });
+  const json: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    console.error(`[mentor] Gemini error ${response.status} (model ${service.model})`, json);
+    return { error: describeGeminiError(response.status, json) };
+  }
+  const result = readGeminiFeedback(json);
+  if ('error' in result) console.warn('[mentor] Gemini gave no feedback', json);
+  return result;
+}
+
+/** Anthropic's Messages API. */
+async function askClaude(service: MentorService, req: MentorRequest): Promise<Answer> {
+  const response = await fetch(MESSAGES_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': service.apiKey,
+      'anthropic-version': ANTHROPIC_VERSION,
+      'anthropic-beta': FALLBACK_BETA,
+    },
+    body: JSON.stringify(buildMessagesRequest(req, service.model)),
+    signal: AbortSignal.timeout(API_TIMEOUT),
+  });
+  const json: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    console.error(`[mentor] Messages API error ${response.status}`, json);
+    return { error: describeApiError(response.status) };
+  }
+  return readFeedback(json);
 }

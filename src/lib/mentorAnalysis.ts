@@ -2,7 +2,7 @@
  * "Check my work": Buddy looks at a photo of the user's hand from the
  * headset camera and gives short feedback on the current step. The photo
  * goes to this app's own dev server (/api/mentor, see src/server/mentorApi.ts),
- * which holds the API key and asks Claude; the key never reaches the browser.
+ * which holds the API key and asks Gemini or Claude; the key never reaches the browser.
  *
  * Shared state, read every frame by Buddy and the menus (no React state).
  */
@@ -44,7 +44,7 @@ export async function checkMentorService(): Promise<void> {
     const body = (await response.json().catch(() => null)) as { configured?: boolean } | null;
     if (!response.ok || !body) throw new Error(`HTTP ${response.status}`);
     mentor.available = body.configured === true;
-    mentor.reason = mentor.available ? '' : 'Mentor feedback isn’t set up: add ANTHROPIC_API_KEY to .env.local on the laptop.';
+    mentor.reason = mentor.available ? '' : 'Mentor feedback isn’t set up: add GEMINI_API_KEY to .env.local on the laptop.';
   } catch {
     mentor.available = false;
     mentor.reason = 'Mentor feedback needs the app running from the laptop (npm run dev).';

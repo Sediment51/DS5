@@ -321,8 +321,9 @@ export function XRView({ onExit }: XRViewProps) {
           <summary>Mentor feedback (“Check my work”)</summary>
           <p>
             Buddy can look at your hand through the headset camera and give feedback on the current step. It
-            needs the app running on this laptop with an Anthropic API key in <code>.env.local</code>{' '}
-            (<code>ANTHROPIC_API_KEY=…</code>), the Quest on USB with <code>adb reverse tcp:5173 tcp:5173</code>,
+            needs the app running on this laptop with a Google Gemini API key in <code>.env.local</code>{' '}
+            (<code>GEMINI_API_KEY=…</code>, or <code>ANTHROPIC_API_KEY=…</code> for Claude), the Quest on USB
+            with <code>adb reverse tcp:5173 tcp:5173</code>,
             and the page opened at <strong>localhost:5173</strong> in Quest Browser. Photos are sent to the AI
             service only when you press the button.
           </p>

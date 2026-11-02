@@ -1,5 +1,72 @@
 import { describe, expect, it } from 'vitest';
-import { MENTOR_MODEL, buildMessagesRequest, describeApiError, parseMentorRequest, readFeedback } from './mentorPrompt';
+import {
+  GEMINI_MODEL,
+  MENTOR_MODEL,
+  buildGeminiRequest,
+  buildMessagesRequest,
+  describeApiError,
+  describeGeminiError,
+  geminiUrl,
+  mentorServiceFromEnv,
+  parseMentorRequest,
+  readFeedback,
+  readGeminiFeedback,
+} from './mentorPrompt';
+
+describe('mentorServiceFromEnv', () => {
+  it('uses Google when GEMINI_API_KEY is set, even with an Anthropic key too', () => {
+    expect(mentorServiceFromEnv({ GEMINI_API_KEY: ' g-key ', ANTHROPIC_API_KEY: 'a-key' })).toEqual({
+      provider: 'gemini',
+      apiKey: 'g-key',
+      model: GEMINI_MODEL,
+    });
+    expect(mentorServiceFromEnv({ GOOGLE_API_KEY: 'g', GEMINI_MODEL: 'gemini-3.6-flash' })?.model).toBe('gemini-3.6-flash');
+  });
+
+  it('falls back to Anthropic, and is off with no key', () => {
+    expect(mentorServiceFromEnv({ ANTHROPIC_API_KEY: 'a-key' })).toEqual({ provider: 'claude', apiKey: 'a-key', model: MENTOR_MODEL });
+    expect(mentorServiceFromEnv({ GEMINI_API_KEY: '  ' })).toBeNull();
+  });
+});
+
+describe('Gemini', () => {
+  it('sends the photo inline with the step, and the mentor prompt as the system instruction', () => {
+    const body = buildGeminiRequest({ mediaType: 'image/jpeg', data: 'abc', stage: 2, stageLabel: 'Press the wax on.' });
+    expect(body.systemInstruction.parts[0].text).toContain('Buddy');
+    const [image, text] = body.contents[0].parts;
+    expect(image).toEqual({ inlineData: { mimeType: 'image/jpeg', data: 'abc' } });
+    expect((text as { text: string }).text).toContain('step 2 of 6: "Press the wax on."');
+    expect(geminiUrl('gemini-3.8-flash')).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent');
+  });
+
+  it('reads the reply text, skipping thoughts', () => {
+    const response = {
+      candidates: [
+        {
+          finishReason: 'STOP',
+          content: { parts: [{ text: 'thinking…', thought: true }, { text: 'Nice clean edges.' }, { text: ' Blend the left side more.' }] },
+        },
+      ],
+    };
+    expect(readGeminiFeedback(response)).toEqual({ feedback: 'Nice clean edges. Blend the left side more.' });
+  });
+
+  it('treats a blocked prompt or a safety stop as declined', () => {
+    expect(readGeminiFeedback({ promptFeedback: { blockReason: 'SAFETY' } })).toHaveProperty('error');
+    expect(readGeminiFeedback({ candidates: [{ finishReason: 'IMAGE_SAFETY' }] })).toEqual({
+      error: expect.stringContaining('can’t give feedback'),
+    });
+    expect(readGeminiFeedback({ candidates: [{ finishReason: 'STOP', content: { parts: [] } }] })).toEqual({
+      error: expect.stringContaining('didn’t get any feedback'),
+    });
+  });
+
+  it('explains a rejected key, a wrong model and a used-up quota', () => {
+    expect(describeGeminiError(400, { error: { status: 'INVALID_ARGUMENT', message: 'API key not valid.' } })).toContain('GEMINI_API_KEY');
+    expect(describeGeminiError(404, null)).toContain('GEMINI_MODEL');
+    expect(describeGeminiError(429, null)).toContain('limit');
+  });
+});
 
 const PHOTO = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==';
 

@@ -147,11 +147,18 @@ where you put it, relative to the mat.
 While working, **Check my work** (under Buddy) takes a photo through the
 headset camera and Buddy gives short feedback on the current step. While it's
 looking, Buddy shows "Let me have a look at your work…". The photo goes to the
-app's own dev server (`/api/mentor`), which asks Claude (`claude-opus-5-5`,
-low effort, with server-side fallback); the API key stays on the laptop.
+app's own dev server (`/api/mentor`), which asks the AI service; the API key
+stays on the laptop.
 
-1. Put your key in `.env.local` (git ignores it):
-   `ANTHROPIC_API_KEY=sk-ant-…`
+- **Google Gemini** (used when `GEMINI_API_KEY` is set): `gemini-3.8-flash`
+  by default; set `GEMINI_MODEL` to use another. Get a key at
+  https://aistudio.google.com/apikey.
+- **Anthropic Claude** (used when only `ANTHROPIC_API_KEY` is set):
+  `claude-opus-5-5`, low effort, with server-side fallback.
+
+1. Put your key in `.env.local` next to `package.json` (git ignores it):
+   `GEMINI_API_KEY=…`. When you start `npm run dev`, it prints which service
+   mentor feedback is using.
 2. `npm run dev` on the laptop.
 3. Connect the Quest by USB and run `adb reverse tcp:5173 tcp:5173`.
 4. In Quest Browser open `http://localhost:5173` (localhost counts as secure
