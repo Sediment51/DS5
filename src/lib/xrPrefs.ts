@@ -36,7 +36,7 @@ export const SKIN_PRESETS = ['#f1d3c2', '#e3b597', '#cf9a78', '#b07a57', '#8a5a3
 
 /** Mat outline colours, for seeing it on light or dark tables. */
 export const MAT_ACCENTS = [
-  { name: 'Mint', color: '#8eddb0' },
+  { name: 'Blue', color: '#7cc4ff' },
   { name: 'White', color: '#f4f3ee' },
   { name: 'Amber', color: '#ffc46b' },
 ] as const;

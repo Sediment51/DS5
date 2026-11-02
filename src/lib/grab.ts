@@ -17,8 +17,8 @@ export type GrabState = 'none' | 'hover' | 'held';
 /** A carried panel's tint: normal, with a hand on it, and while it's carried. */
 export const PANEL_GRAB_TINT: Record<GrabState, THREE.Color> = {
   none: new THREE.Color('#ffffff'),
-  hover: new THREE.Color('#d9f5e4'),
-  held: new THREE.Color('#b5ecca'),
+  hover: new THREE.Color('#dbe8ff'),
+  held: new THREE.Color('#bcd4ff'),
 };
 
 export interface Grabbable {

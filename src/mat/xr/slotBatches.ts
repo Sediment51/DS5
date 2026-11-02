@@ -16,7 +16,53 @@ export const MAX_SLOTS = MAX_ITEMS;
 
 const LINE_LIFT = 0.0015;
 const FILL_LIFT = 0.0006;
-const KIND = { dashed: 0, solid: 1, fill: 2 };
+const KIND = { dashed: 0, solid: 1, fill: 2, cell: 3, compare: 4 };
+/** Corner radius of a cell's outline (m). */
+const CELL_RADIUS = 0.008;
+
+/** A cell's rounded outline, centred on the origin (built once per size). */
+const cellCache = new Map<string, THREE.BufferGeometry>();
+function cellGeometry(width: number, depth: number) {
+  const key = `${width.toFixed(4)}:${depth.toFixed(4)}`;
+  let geometry = cellCache.get(key);
+  if (!geometry) {
+    const path = roundedRectPath(width, depth, CELL_RADIUS);
+    geometry = ribbonGeometry([{ points: path, closed: true }], 0.0012);
+    cellCache.set(key, geometry);
+  }
+  return geometry;
+}
+
+/** A compare spot: a dashed ring (built once per size). */
+const compareCache = new Map<string, THREE.BufferGeometry>();
+function compareGeometry(diameter: number) {
+  const key = diameter.toFixed(4);
+  let geometry = compareCache.get(key);
+  if (!geometry) {
+    const path = footprintPath({ shape: 'circle', width: diameter, depth: diameter });
+    geometry = ribbonGeometry(dashPath(path, 0.004, 0.003), 0.0016);
+    compareCache.set(key, geometry);
+  }
+  return geometry;
+}
+
+function roundedRectPath(width: number, depth: number, radius: number): number[] {
+  const w = width / 2;
+  const d = depth / 2;
+  const r = Math.min(radius, w, d);
+  const out: number[] = [];
+  const corner = (cx: number, cz: number, from: number) => {
+    for (let i = 0; i <= 4; i++) {
+      const a = from + (i / 4) * (Math.PI / 2);
+      out.push(cx + r * Math.cos(a), cz + r * Math.sin(a));
+    }
+  };
+  corner(w - r, -d + r, -Math.PI / 2);
+  corner(w - r, d - r, 0);
+  corner(-w + r, d - r, Math.PI / 2);
+  corner(-w + r, -d + r, Math.PI);
+  return out;
+}
 
 /** Per footprint shape: dashed and solid outlines and the fill, built once and reused. */
 const shapeCache = new Map<string, { dashed: THREE.BufferGeometry; solid: THREE.BufferGeometry; fill: THREE.BufferGeometry }>();
@@ -49,7 +95,9 @@ const footprintVertex = /* glsl */ `
     float kind;
     if (aKind < 0.5) kind = current ? 0.0 : 0.9;          // dashed: the normal outline
     else if (aKind < 1.5) kind = current ? 1.0 : 0.0;     // solid: a highlighted item's outline
-    else kind = current ? 0.14 + 0.04 * sin(uTime * 3.0) : 0.05; // fill: still, gently pulsing only when highlighted
+    else if (aKind < 2.5) kind = current ? 0.14 + 0.04 * sin(uTime * 3.0) : 0.05; // fill: still, gently pulsing only when highlighted
+    else if (aKind < 3.5) kind = current ? 0.6 : 0.2;     // the cell's own space
+    else kind = current ? 0.95 : 0.3;                     // the compare spot for the amount
     vAlpha = alpha * kind;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
@@ -75,7 +123,7 @@ export class FootprintBatch {
   constructor() {
     this.material = new THREE.ShaderMaterial({
       uniforms: {
-        uColor: { value: new THREE.Color(COLORS.mint) },
+        uColor: { value: new THREE.Color(COLORS.accent) },
         uAlpha: { value: this.alphas },
         uLit: { value: this.lit },
         uTime: { value: 0 },
@@ -91,24 +139,37 @@ export class FootprintBatch {
     this.mesh.renderOrder = 2;
   }
 
-  /** Rebuilds the batch: one entry per slot, its footprint centred at (x, z) in mat space. */
-  build(entries: readonly { shape: FootprintShape; x: number; z: number }[]) {
+  /**
+   * Rebuilds the batch: one entry per slot, its footprint centred at (x, z) in
+   * mat space, its cell's outline, and its compare spot if it has one.
+   */
+  build(
+    entries: readonly {
+      shape: FootprintShape;
+      x: number;
+      z: number;
+      cell: { x: number; z: number; width: number; depth: number };
+      compare: { x: number; z: number; diameter: number } | null;
+    }[],
+  ) {
     const positions: number[] = [];
     const slots: number[] = [];
     const kinds: number[] = [];
     const indices: number[] = [];
     entries.forEach((entry, slot) => {
       const shape = shapeGeometry(entry.shape);
-      const parts: [THREE.BufferGeometry, number, number][] = [
-        [shape.fill, KIND.fill, FILL_LIFT],
-        [shape.dashed, KIND.dashed, LINE_LIFT],
-        [shape.solid, KIND.solid, LINE_LIFT],
+      const parts: [THREE.BufferGeometry, number, number, number, number][] = [
+        [shape.fill, KIND.fill, FILL_LIFT, entry.x, entry.z],
+        [shape.dashed, KIND.dashed, LINE_LIFT, entry.x, entry.z],
+        [shape.solid, KIND.solid, LINE_LIFT, entry.x, entry.z],
+        [cellGeometry(entry.cell.width - 0.002, entry.cell.depth - 0.002), KIND.cell, LINE_LIFT, entry.cell.x, entry.cell.z],
       ];
-      for (const [geometry, kind, lift] of parts) {
+      if (entry.compare) parts.push([compareGeometry(entry.compare.diameter), KIND.compare, LINE_LIFT, entry.compare.x, entry.compare.z]);
+      for (const [geometry, kind, lift, ox, oz] of parts) {
         const base = positions.length / 3;
         const p = geometry.getAttribute('position');
         for (let i = 0; i < p.count; i++) {
-          positions.push(p.getX(i) + entry.x, p.getY(i) + lift, p.getZ(i) + entry.z);
+          positions.push(p.getX(i) + ox, p.getY(i) + lift, p.getZ(i) + oz);
           slots.push(slot);
           kinds.push(kind);
         }
@@ -165,7 +226,7 @@ export class BadgeBatch {
     this.alpha.setUsage(THREE.DynamicDrawUsage);
     geometry.setAttribute('aAlpha', this.alpha);
     const material = (this.material = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(COLORS.mint) } },
+      uniforms: { uColor: { value: new THREE.Color(COLORS.accent) } },
       vertexShader: badgeVertex,
       fragmentShader: flatFragment,
       transparent: true,

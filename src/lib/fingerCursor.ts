@@ -4,11 +4,11 @@ import * as THREE from 'three';
 export const CURSOR_RANGE = 0.08;
 
 const IDLE = new THREE.Color('#1f2a24');
-const TOUCH = new THREE.Color('#2f9e63');
+const TOUCH = new THREE.Color('#2563eb');
 
 /**
  * Where your fingertip is on a panel: a ring on its face under the finger,
- * shrinking and darkening as the finger comes closer and turning green on
+ * shrinking and darkening as the finger comes closer and turning blue on
  * contact, so you can see what you're about to press.
  */
 export class FingerCursor {

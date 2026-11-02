@@ -4,14 +4,14 @@ import type { MatPlacement } from '../lib/rectFit';
 import { rectPath, ribbonGeometry } from './outlines';
 import { COLORS, hex, makeText, setTextContent } from './text';
 
-const GOOD = new THREE.Color(COLORS.mint);
+const GOOD = new THREE.Color(COLORS.accent);
 const SHORT = new THREE.Color(COLORS.warn);
 /** Lift over the table so the ghost outline doesn't flicker against it. */
 const LIFT = 0.002;
 
 /**
  * While the user traces the mat: a ghost of the rectangle it would become,
- * with its size, amber until it's big enough and mint once letting go would
+ * with its size, amber until it's big enough and blue once letting go would
  * place it.
  */
 export class MatPreview {
@@ -45,7 +45,7 @@ export class MatPreview {
     this.outline.material.color.copy(bigEnough ? GOOD : SHORT);
     const size = `${Math.round(placement.width * 100)} × ${Math.round(placement.depth * 100)} cm`;
     setTextContent(this.label, bigEnough ? `Let go to place · ${size}` : `Keep going · ${size}`);
-    this.label.color = hex(bigEnough ? COLORS.mint : COLORS.warn);
+    this.label.color = hex(bigEnough ? COLORS.accent : COLORS.warn);
     this.label.position.set(placement.cx, y + 0.03, placement.cz);
     this.label.lookAt(head);
     this.group.visible = true;

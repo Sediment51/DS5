@@ -14,7 +14,7 @@ describe('parseKit', () => {
     expect(items.map((i) => i.step)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const wax = items.find((i) => i.id === 'scar-wax')!;
     expect(wax.footprint).toEqual({ shape: 'circle', width: 0.07, depth: 0.07 });
-    expect(wax.visual).toBeNull();
+    expect(wax.visual).toMatchObject({ type: 'sphere', radius: 0.008 });
     const tool = items.find((i) => i.id === 'sculpting-tool')!;
     expect(tool.footprint).toEqual({ shape: 'pill', width: 0.16, depth: 0.016 });
   });

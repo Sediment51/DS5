@@ -247,7 +247,6 @@ export class XRPanel {
 /** Where a user sits relative to the workspace frame: in front of the mat, above it. */
 const eye = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
-const frameInverse = new THREE.Matrix4();
 const localMatrix = new THREE.Matrix4();
 const pos = new THREE.Vector3();
 
@@ -256,11 +255,13 @@ const placements = new Set<FramePlacement>();
 
 /**
  * Where something sits in the workspace: a default spot in frame space
- * (turned to face a seated user), or wherever the user carried it, kept
- * relative to the frame so it moves with the mat.
+ * (turned to face a seated user, moving with the mat), or, once the user
+ * has carried it somewhere, exactly there in the room, so moving one thing
+ * (the mat, say) never moves another the user placed.
  */
 export class FramePlacement {
   readonly defaultLocal = new THREE.Matrix4();
+  /** Where the user put it, in world space (null: its default spot). */
   user: THREE.Matrix4 | null = null;
 
   constructor() {
@@ -275,9 +276,9 @@ export class FramePlacement {
     this.defaultLocal.lookAt(eye, pos, UP).setPosition(pos);
   }
 
-  /** The world pose now (frame × local). */
+  /** The world pose now: where the user put it, else frame × default spot. */
   world(out: THREE.Matrix4) {
-    return out.multiplyMatrices(workspace.frame, this.user ?? this.defaultLocal);
+    return this.user ? out.copy(this.user) : out.multiplyMatrices(workspace.frame, this.defaultLocal);
   }
 
   /** Puts `object` at the world pose. */
@@ -286,10 +287,9 @@ export class FramePlacement {
     object.updateMatrixWorld();
   }
 
-  /** The user put it here (world): remember it relative to the frame. */
+  /** The user put it here (world): it stays exactly there for the session. */
   storeWorld(world: THREE.Matrix4) {
-    frameInverse.copy(workspace.frame).invert();
-    this.user = new THREE.Matrix4().multiplyMatrices(frameInverse, world);
+    this.user = world.clone();
   }
 
   dispose() {

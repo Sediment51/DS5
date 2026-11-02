@@ -1,13 +1,13 @@
 /**
  * One look for every headset panel, drawn on canvases: the app's light card,
- * DM Sans, ink text and one green accent. Every control has the same states,
+ * DM Sans, ink text and one blue accent. Every control has the same states,
  * and each state shows by shape, icon or words as well as colour:
  *
  *   default      light fill
- *   hover        green outline (a fingertip is over it)
- *   selected     green fill, white text (an option that's on)
- *   active       green fill + ▾ (a menu that's open)
- *   processing   "…" after the label, a soft green fill
+ *   hover        blue outline (a fingertip is over it)
+ *   selected     blue fill, white text (an option that's on)
+ *   active       blue fill + ▾ (a menu that's open)
+ *   processing   "…" after the label, a soft blue fill
  *   completed    ✓ before the label
  *   unavailable  pale, muted text, ⚠ before the label
  */
@@ -19,9 +19,9 @@ export const UI = {
   muted: '#6b746f',
   line: '#d6dbd8',
   fill: '#e4e8e5',
-  green: '#2f9e63',
-  greenSoft: 'rgba(47, 158, 99, 0.14)',
-  greenGlow: 'rgba(47, 158, 99, 0.22)',
+  accent: '#2563eb',
+  accentSoft: 'rgba(37, 99, 235, 0.14)',
+  accentGlow: 'rgba(37, 99, 235, 0.24)',
   amber: '#c98a1a',
   white: '#ffffff',
   font: '"DM Sans", system-ui, sans-serif',
@@ -43,16 +43,16 @@ function roundRect(ctx: CanvasRenderingContext2D, r: PxRect, radius: number) {
   ctx.roundRect(r.x, r.y, r.w, r.h, Math.min(radius, r.h / 2, r.w / 2));
 }
 
-/** The panel's card. A hand on it (to carry it) turns its border green. */
+/** The panel's card. A hand on it (to carry it) turns its border blue. */
 export function drawCard(ctx: CanvasRenderingContext2D, w: number, h: number, grab: 'none' | 'hover' | 'held' = 'none') {
   ctx.clearRect(0, 0, w, h);
   const r: PxRect = { x: 4, y: 4, w: w - 8, h: h - 8 };
-  ctx.fillStyle = grab === 'held' ? '#e6f6ec' : UI.card;
+  ctx.fillStyle = grab === 'held' ? '#e7efff' : UI.card;
   roundRect(ctx, r, 44);
   ctx.fill();
   if (grab !== 'none') {
     ctx.lineWidth = 8;
-    ctx.strokeStyle = UI.green;
+    ctx.strokeStyle = UI.accent;
     ctx.stroke();
   }
 }
@@ -66,7 +66,7 @@ export function drawTitle(ctx: CanvasRenderingContext2D, x: number, y: number, w
   ctx.fillText(title, x, y);
   if (value) {
     ctx.textAlign = 'right';
-    ctx.fillStyle = UI.green;
+    ctx.fillStyle = UI.accent;
     ctx.fillText(value, x + w, y);
   }
 }
@@ -84,11 +84,11 @@ export function drawNote(
   ctx.textBaseline = 'middle';
   ctx.textAlign = align;
   font(ctx, px, 500);
-  ctx.fillStyle = tone === 'ok' ? UI.green : tone === 'warn' ? UI.amber : UI.muted;
+  ctx.fillStyle = tone === 'ok' ? UI.accent : tone === 'warn' ? UI.amber : UI.muted;
   ctx.fillText(text, x, y);
 }
 
-/** A button. `primary` makes it the green call to action. */
+/** A button. `primary` makes it the blue call to action. */
 export function drawButton(
   ctx: CanvasRenderingContext2D,
   r: PxRect,
@@ -98,12 +98,12 @@ export function drawButton(
 ) {
   const on = primary || state === 'selected' || state === 'active' || state === 'completed';
   const off = state === 'unavailable';
-  ctx.fillStyle = off ? '#eef0ee' : state === 'processing' ? UI.greenSoft : on ? UI.green : UI.fill;
+  ctx.fillStyle = off ? '#eef0ee' : state === 'processing' ? UI.accentSoft : on ? UI.accent : UI.fill;
   roundRect(ctx, r, 26);
   ctx.fill();
   if (state === 'hover') {
     ctx.lineWidth = 8;
-    ctx.strokeStyle = primary ? UI.ink : UI.green;
+    ctx.strokeStyle = primary ? UI.ink : UI.accent;
     ctx.stroke();
   }
   let text = label;
@@ -121,7 +121,7 @@ export function drawButton(
 /** A labelled on/off switch: the label on the left, a pill saying On / Off on the right. */
 export function drawToggle(ctx: CanvasRenderingContext2D, r: PxRect, label: string, on: boolean, hover: boolean, px = 36) {
   if (hover) {
-    ctx.fillStyle = UI.greenSoft;
+    ctx.fillStyle = UI.accentSoft;
     roundRect(ctx, r, 22);
     ctx.fill();
   }
@@ -131,7 +131,7 @@ export function drawToggle(ctx: CanvasRenderingContext2D, r: PxRect, label: stri
   font(ctx, px, 500);
   ctx.fillText(label, r.x + 18, r.y + r.h / 2 + 2);
   const pill: PxRect = { x: r.x + r.w - 150, y: r.y + r.h / 2 - 28, w: 132, h: 56 };
-  ctx.fillStyle = on ? UI.green : UI.fill;
+  ctx.fillStyle = on ? UI.accent : UI.fill;
   roundRect(ctx, pill, 28);
   ctx.fill();
   ctx.beginPath();
@@ -160,12 +160,12 @@ export function drawSegmented(
   options.forEach((label, i) => {
     const cell: PxRect = { x: r.x + i * w + 5, y: r.y + 5, w: w - 10, h: r.h - 10 };
     if (i === selected) {
-      ctx.fillStyle = UI.green;
+      ctx.fillStyle = UI.accent;
       roundRect(ctx, cell, 22);
       ctx.fill();
     } else if (i === hover) {
       ctx.lineWidth = 6;
-      ctx.strokeStyle = UI.green;
+      ctx.strokeStyle = UI.accent;
       roundRect(ctx, cell, 22);
       ctx.stroke();
     }
@@ -194,7 +194,7 @@ export function drawSlider(
   ctx.lineCap = 'round';
   if (grip !== 'idle') {
     ctx.lineWidth = 48;
-    ctx.strokeStyle = grip === 'held' ? UI.greenGlow : UI.greenSoft;
+    ctx.strokeStyle = grip === 'held' ? UI.accentGlow : UI.accentSoft;
     ctx.beginPath();
     ctx.moveTo(x0, cy);
     ctx.lineTo(x1, cy);
@@ -207,12 +207,12 @@ export function drawSlider(
   ctx.lineTo(x1, cy);
   ctx.stroke();
   const knob = x0 + (x1 - x0) * Math.min(Math.max(value, 0), 1);
-  ctx.strokeStyle = UI.green;
+  ctx.strokeStyle = UI.accent;
   ctx.beginPath();
   ctx.moveTo(x0, cy);
   ctx.lineTo(Math.max(knob, x0 + 0.1), cy);
   ctx.stroke();
-  ctx.fillStyle = grip === 'held' ? UI.green : UI.white;
+  ctx.fillStyle = grip === 'held' ? UI.accent : UI.white;
   ctx.lineWidth = 8;
   ctx.beginPath();
   ctx.arc(knob, cy, grip === 'held' ? 34 : grip === 'hover' ? 30 : 26, 0, Math.PI * 2);
@@ -239,7 +239,7 @@ export function drawSwatch(ctx: CanvasRenderingContext2D, r: PxRect, color: stri
   ctx.fill();
   if (selected || hover) {
     ctx.lineWidth = selected ? 10 : 6;
-    ctx.strokeStyle = UI.green;
+    ctx.strokeStyle = UI.accent;
     roundRect(ctx, { x: r.x - 6, y: r.y - 6, w: r.w + 12, h: r.h + 12 }, 22);
     ctx.stroke();
   }
@@ -259,7 +259,7 @@ export function drawSwatch(ctx: CanvasRenderingContext2D, r: PxRect, color: stri
 export function drawIcon(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, tone: 'info' | 'ok' | 'warn') {
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.fillStyle = tone === 'ok' ? UI.green : tone === 'warn' ? UI.amber : UI.ink;
+  ctx.fillStyle = tone === 'ok' ? UI.accent : tone === 'warn' ? UI.amber : UI.ink;
   ctx.fill();
   ctx.fillStyle = UI.white;
   ctx.textAlign = 'center';

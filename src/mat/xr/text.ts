@@ -9,16 +9,28 @@ export const FONTS = {
   bold: fontUrl('dm-sans-latin-700-normal.woff'),
 };
 
-/** Colours chosen to read over passthrough: off-white text on a soft dark halo, mint accent. */
+/** Colours chosen to read over passthrough: off-white text on a soft dark halo, blue accent. */
 export const COLORS = {
   label: '#f4f3ee',
   /** Item names: off-white, a step quieter than the quantity. */
   name: '#e2e8e4',
   muted: '#cfd8d2',
-  mint: '#8eddb0',
+  /** The workspace's accent (outlines, interactive things). */
+  accent: '#7cc4ff',
   ink: '#0e1512',
   warn: '#ffc7a8',
 };
+
+/**
+ * Feedback states on objects, always the same: blue = selected, cyan =
+ * correct, amber = needs attention (each also has a shape or icon, never
+ * colour alone).
+ */
+export const FEEDBACK = {
+  selected: '#5aa9ff',
+  correct: '#3fdcff',
+  attention: '#ffb547',
+} as const;
 
 /**
  * A colour as a number for text: troika re-reads text colours every frame,
@@ -28,7 +40,7 @@ export const hex = (color: string) => new Color(color).getHex();
 
 /**
  * Base material for text: like troika's default, but exempt from the
- * scene's tone mapping so the off-white and mint stay true.
+ * scene's tone mapping so the off-white and blue stay true.
  */
 export const textMaterial = () =>
   new MeshBasicMaterial({ color: 0xffffff, side: DoubleSide, transparent: true, toneMapped: false });

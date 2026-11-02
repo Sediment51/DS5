@@ -10,7 +10,6 @@ import {
   UI,
   drawButton,
   drawCard,
-  drawIcon,
   drawNote,
   drawSegmented,
   drawSlider,
@@ -18,10 +17,10 @@ import {
   drawTitle,
   drawToggle,
   font,
-  wrapText,
   type UIState,
 } from '../lib/xrPanelStyle';
 import { MAT_ACCENTS, SKIN_PRESETS, requestReattach, resetXRPrefs, setXRPrefs, xrPrefs } from '../lib/xrPrefs';
+import { FEEDBACK } from '../mat/xr/text';
 import { uiSound } from '../lib/uiSound';
 
 /**
@@ -157,10 +156,10 @@ function MenuButton({ grab }: { grab: GrabSystem }) {
       ctx.clearRect(0, 0, w, h);
       ctx.beginPath();
       ctx.arc(w / 2, h / 2, w / 2 - 6, 0, Math.PI * 2);
-      ctx.fillStyle = open ? UI.green : UI.card;
+      ctx.fillStyle = open ? UI.accent : UI.card;
       ctx.fill();
       ctx.lineWidth = p.hover === 'menu' || p.grabState !== 'none' ? 12 : 6;
-      ctx.strokeStyle = UI.green;
+      ctx.strokeStyle = UI.accent;
       ctx.stroke();
       // ☰ drawn as three bars, then the word.
       ctx.fillStyle = open ? UI.white : UI.ink;
@@ -233,7 +232,7 @@ function MainMenu({ grab, woundOpacity, onWoundOpacityChange }: MenuProps) {
         case 'hand-left':
         case 'hand-right':
           setXRPrefs({ hand: id === 'hand-left' ? 'left' : 'right' });
-          workspace.notify(`Wound on your ${xrPrefs.hand} hand`, '', 'ok', 2.5);
+          workspace.notify(`Wound on your ${xrPrefs.hand} hand`, 'hand', 'ok', 1.8);
           break;
         case 'height-down':
         case 'height-up': {
@@ -243,7 +242,7 @@ function MainMenu({ grab, woundOpacity, onWoundOpacityChange }: MenuProps) {
         }
         case 'calibrate':
           requestReattach();
-          workspace.notify('Calibrating your hand', `Hold your ${xrPrefs.hand} palm flat and still for a moment.`, 'info', 3);
+          workspace.notify('Hold your palm flat', 'hand', 'info', 2.5);
           break;
         case 'redraw':
           if (local.redrawUntil > local.now) {
@@ -251,18 +250,18 @@ function MainMenu({ grab, woundOpacity, onWoundOpacityChange }: MenuProps) {
             menus.open = null;
             workspace.mat?.redraw();
           } else {
+            // The button turns to "Tap again" for 3 s.
             local.redrawUntil = local.now + 3;
-            workspace.notify('Tap Redraw again to remove the mat', 'Then trace a new one.', 'warn', 3);
           }
           break;
         case 'reset':
           resetXRPrefs();
           FramePlacement.resetAll();
-          workspace.buddyLocal = null;
+          workspace.buddyWorld = null;
           woundOpacity.current = 1;
           onWoundOpacityChange(1);
           workspace.mat?.setOpacity(DEFAULT_MAT_OPACITY, true);
-          workspace.notify('Settings reset', 'Panels and Buddy are back in their places.', 'ok', 3);
+          workspace.notify('Reset', 'mat', 'ok', 1.8);
           break;
       }
     },
@@ -497,7 +496,6 @@ function ColourPanel({ grab }: { grab: GrabSystem }) {
     onPress: (id) => {
       if (id === 'reset') {
         setXRPrefs({ skinAuto: true, skinPreset: 2, skinFine: 0.5, matAccent: 0 });
-        workspace.notify('Colours reset', '', 'ok', 2);
       } else if (id === 'auto') setXRPrefs({ skinAuto: !xrPrefs.skinAuto });
       else if (id.startsWith('skin-')) setXRPrefs({ skinPreset: Number(id.slice(5)), skinAuto: false });
       else if (id.startsWith('accent-')) setXRPrefs({ matAccent: Number(id.slice(7)) });
@@ -531,15 +529,19 @@ function ColourPanel({ grab }: { grab: GrabSystem }) {
 // ---------------------------------------------------------------------------
 // Buddy's actions: the one next step, always under Buddy.
 
-/** Buddy's spot in frame space: to the left of the mat, mid-height, or where the user put it. */
-export function buddyHomeLocal(out: THREE.Vector3) {
-  if (workspace.buddyLocal) return out.copy(workspace.buddyLocal);
-  return out.set(-workspace.width / 2 - 0.13, 0.17, 0);
+/**
+ * Buddy's spot in world space: to the left of the mat, mid-height (moving
+ * with the mat), or wherever the user put it (staying there).
+ */
+export function buddyHome(out: THREE.Vector3) {
+  if (workspace.buddyWorld) return out.copy(workspace.buddyWorld);
+  return out.set(-workspace.width / 2 - 0.13, 0.17, 0).applyMatrix4(workspace.frame);
 }
 
 const ACT_W = 0.2;
 const ACT_H = 0.05;
 const buddySpot = new THREE.Vector3();
+const frameInverse = new THREE.Matrix4();
 
 function MentorActions({ grab }: { grab: GrabSystem }) {
   const panel = useWorkspacePanel({
@@ -554,7 +556,8 @@ function MentorActions({ grab }: { grab: GrabSystem }) {
       return [region(phase === 'intro' ? 'got-it' : 'start', -0.095, 0.095, -0.02, 0.02)];
     },
     place: () => {
-      buddyHomeLocal(buddySpot);
+      // Under Buddy's spot, wherever that is (given in frame space).
+      buddyHome(buddySpot).applyMatrix4(frameInverse.copy(workspace.frame).invert());
       return [buddySpot.x, Math.max(buddySpot.y - 0.1, 0.03), buddySpot.z];
     },
     shown: () => phaseIs('intro', 'browse', 'work'),
@@ -565,19 +568,18 @@ function MentorActions({ grab }: { grab: GrabSystem }) {
       else if (id === 'start') flow.startWork();
       else if (id === 'pause') {
         flow.stopWork();
-        workspace.notify('Paused', 'Tap Start working to carry on.', 'info', 3);
       } else if (id === 'check') {
         if (mentor.status === 'processing') return;
         if (mentor.available === null) {
-          workspace.notify('Still connecting to the feedback service', 'Try again in a moment.', 'info', 3);
+          workspace.notify('Connecting…', 'view', 'info', 2);
           return;
         }
         if (!mentor.available) {
-          workspace.notify('Feedback isn’t available', mentor.reason, 'warn', 5);
+          workspace.notify('Feedback unavailable', 'view', 'warn', 4, mentor.reason);
           return;
         }
         if (!woundLink.tracked) {
-          workspace.notify(`Hold up your ${xrPrefs.hand} hand first`, 'Buddy needs to see your work.', 'warn', 3);
+          workspace.notify(`Show your ${xrPrefs.hand} palm`, 'view', 'warn', 2.5);
           return;
         }
         const stage = woundLink.flow?.stage ?? 0;
@@ -585,7 +587,7 @@ function MentorActions({ grab }: { grab: GrabSystem }) {
         mentor.captureRequested = true;
         if (!mentor.privacyShown) {
           mentor.privacyShown = true;
-          workspace.notify('Taking a photo for Buddy', 'Your photo is sent to the AI service to give feedback.', 'info', 4);
+          workspace.notify('Photo sent to the AI for feedback', 'hand', 'info', 3);
         }
       }
     },
@@ -619,24 +621,28 @@ function MentorActions({ grab }: { grab: GrabSystem }) {
 }
 
 // ---------------------------------------------------------------------------
-// The status board: what just happened, or what to do now.
+// Cues: a few glowing words and an icon, no card, shown at what they're about.
 
-const BOARD_W = 0.38;
-const BOARD_H = 0.1;
-/** In front of the eyes and below them, following the head lazily. */
-const BOARD_DISTANCE = 0.62;
-const BOARD_DROP = 0.2;
+const CUE_W = 0.34;
+const CUE_H = 0.075;
+/** Without anything to point at: below the view, following the head lazily. */
+const CUE_DISTANCE = 0.58;
+const CUE_DROP = 0.17;
+/** Above the mat's front edge, and above the palm. */
+const CUE_OVER_MAT = 0.06;
+const CUE_OVER_HAND = 0.075;
+const TONE_COLOR = { info: '#5aa9ff', ok: FEEDBACK.correct, warn: FEEDBACK.attention } as const;
 
-function StatusBoard() {
+function Cue() {
   const gl = useThree((s) => s.gl);
-  const board = useMemo(() => {
+  const cue = useMemo(() => {
     const canvas = document.createElement('canvas');
-    canvas.width = Math.round(BOARD_W * 4000);
-    canvas.height = Math.round(BOARD_H * 4000);
+    canvas.width = Math.round(CUE_W * 4000);
+    canvas.height = Math.round(CUE_H * 4000);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0, depthTest: false, toneMapped: false });
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(BOARD_W, BOARD_H), material);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(CUE_W, CUE_H), material);
     mesh.renderOrder = 60;
     mesh.visible = false;
     return { canvas, texture, material, mesh };
@@ -647,11 +653,11 @@ function StatusBoard() {
   );
   useEffect(
     () => () => {
-      board.texture.dispose();
-      board.material.dispose();
-      board.mesh.geometry.dispose();
+      cue.texture.dispose();
+      cue.material.dispose();
+      cue.mesh.geometry.dispose();
     },
-    [board],
+    [cue],
   );
 
   useFrame((_, delta) => {
@@ -660,69 +666,84 @@ function StatusBoard() {
     if (m.id !== s.id) {
       s.id = m.id;
       s.left = m.title ? m.seconds : 0;
-      if (m.title) drawBoard(board.canvas, m.title, m.detail, m.tone);
-      board.texture.needsUpdate = true;
+      if (m.title) drawCue(cue.canvas, m.title, m.detail, m.tone);
+      cue.texture.needsUpdate = true;
     } else if (s.left !== Infinity) s.left -= dt;
     const wanted = gl.xr.isPresenting && s.left > 0 ? 1 : 0;
     s.opacity += (wanted - s.opacity) * (1 - Math.exp(-10 * dt));
     if (wanted === 0 && s.opacity < 0.01) s.opacity = 0;
-    board.material.opacity = s.opacity;
-    board.mesh.visible = s.opacity > 0;
-    if (!board.mesh.visible) {
+    cue.material.opacity = s.opacity;
+    cue.mesh.visible = s.opacity > 0;
+    if (!cue.mesh.visible) {
       s.placed = false;
       return;
     }
     const head = gl.xr.getCamera();
     head.getWorldPosition(s.head);
-    head.getWorldDirection(s.forward);
-    s.forward.y = 0;
-    if (s.forward.lengthSq() < 1e-6) s.forward.set(0, 0, -1);
-    s.forward.normalize();
-    s.target.copy(s.head).addScaledVector(s.forward, BOARD_DISTANCE);
-    s.target.y -= BOARD_DROP;
-    if (!s.placed) board.mesh.position.copy(s.target);
-    else board.mesh.position.lerp(s.target, 1 - Math.exp(-3 * dt));
+    // At the thing it's about, else below the view.
+    if (m.at === 'mat' && workspace.frameValid) {
+      s.target.set(0, CUE_OVER_MAT, workspace.depth / 2 - 0.02).applyMatrix4(workspace.frame);
+    } else if (m.at === 'hand' && workspace.handSeen) {
+      s.target.copy(workspace.handPoint);
+      s.target.y += CUE_OVER_HAND;
+    } else {
+      head.getWorldDirection(s.forward);
+      s.forward.y = 0;
+      if (s.forward.lengthSq() < 1e-6) s.forward.set(0, 0, -1);
+      s.forward.normalize();
+      s.target.copy(s.head).addScaledVector(s.forward, CUE_DISTANCE);
+      s.target.y -= CUE_DROP;
+    }
+    if (!s.placed) cue.mesh.position.copy(s.target);
+    else cue.mesh.position.lerp(s.target, 1 - Math.exp(-6 * dt));
     s.placed = true;
-    board.mesh.lookAt(s.head);
+    cue.mesh.lookAt(s.head);
   });
 
-  return <primitive object={board.mesh} />;
+  return <primitive object={cue.mesh} />;
 }
 
-function drawBoard(canvas: HTMLCanvasElement, title: string, detail: string, tone: 'info' | 'ok' | 'warn') {
+/** The cue: an icon in its state's colour, the words in white over a soft dark glow (readable over any room). */
+function drawCue(canvas: HTMLCanvasElement, title: string, detail: string, tone: 'info' | 'ok' | 'warn') {
   const ctx = canvas.getContext('2d')!;
   const { width: w, height: h } = canvas;
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = UI.card;
+  font(ctx, 62, 700);
+  const titleWidth = Math.min(ctx.measureText(title).width, w - 160);
+  font(ctx, 38, 500);
+  const detailWidth = detail ? Math.min(ctx.measureText(detail).width, w - 160) : 0;
+  const textWidth = Math.max(titleWidth, detailWidth);
+  const iconR = 40;
+  const total = iconR * 2 + 24 + textWidth;
+  const x0 = (w - total) / 2;
+  const cy = h / 2;
+  // The icon: a disc in the state's colour (✓ done, ! needs attention, i info).
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+  ctx.shadowBlur = 18;
   ctx.beginPath();
-  ctx.roundRect(4, 4, w - 8, h - 8, 48);
+  ctx.arc(x0 + iconR, cy, iconR, 0, Math.PI * 2);
+  ctx.fillStyle = TONE_COLOR[tone];
   ctx.fill();
-  if (tone === 'warn') {
-    ctx.lineWidth = 8;
-    ctx.strokeStyle = UI.amber;
-    ctx.stroke();
-  }
-  drawIcon(ctx, 92, h / 2, 46, tone);
-  const x = 170;
-  const maxWidth = w - x - 40;
-  font(ctx, 50, 700);
-  ctx.textAlign = 'left';
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = UI.ink;
+  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = UI.ink;
-  const titleLines = wrapText(ctx, title, maxWidth, 1);
-  font(ctx, 36, 500);
-  const detailLines = detail ? wrapText(ctx, detail, maxWidth, 2) : [];
-  const total = 60 + detailLines.length * 46;
-  let y = h / 2 - total / 2 + 30;
   font(ctx, 50, 700);
-  ctx.fillStyle = UI.ink;
-  ctx.fillText(titleLines[0] ?? '', x, y);
-  font(ctx, 36, 500);
-  ctx.fillStyle = UI.muted;
-  for (const line of detailLines) {
-    y += 46;
-    ctx.fillText(line, x, y + 8);
+  ctx.fillText(tone === 'ok' ? '✓' : tone === 'warn' ? '!' : 'i', x0 + iconR, cy + 3);
+  // The words.
+  const tx = x0 + iconR * 2 + 24;
+  ctx.textAlign = 'left';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+  ctx.shadowBlur = 16;
+  font(ctx, 62, 700);
+  ctx.fillStyle = tone === 'warn' ? FEEDBACK.attention : UI.white;
+  ctx.fillText(title, tx, detail ? cy - 26 : cy + 4, w - tx - 20);
+  if (detail) {
+    font(ctx, 38, 500);
+    ctx.fillStyle = '#e8eef7';
+    ctx.fillText(detail, tx, cy + 38, w - tx - 20);
   }
+  ctx.shadowBlur = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -737,12 +758,12 @@ function MenuTimer() {
   return null;
 }
 
-/** The workspace's menus and status board (headset sessions). */
+/** The workspace's menus and cues (headset sessions). */
 export function XRMenus({ grab, woundOpacity, onWoundOpacityChange }: MenuProps) {
   const anyPhase = () => phaseIs('browse', 'work');
   return (
     <>
-      <StatusBoard />
+      <Cue />
       <MenuTimer />
       <MenuButton grab={grab} />
       <MainMenu grab={grab} woundOpacity={woundOpacity} onWoundOpacityChange={onWoundOpacityChange} />

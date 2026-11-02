@@ -6,6 +6,8 @@
  *
  * Shared state, read every frame by Buddy and the menus (no React state).
  */
+import type { MentorVerdict } from '../server/mentorPrompt';
+
 export type MentorStatus = 'idle' | 'processing' | 'done' | 'error';
 
 export const MENTOR_ENDPOINT = 'api/mentor';
@@ -14,8 +16,10 @@ const TIMEOUT_MS = 65_000;
 
 export const mentor = {
   status: 'idle' as MentorStatus,
-  /** The feedback, or what went wrong, in plain words. */
+  /** A few words: the tip, or what went wrong. */
   text: '',
+  /** Per part of the wound: fine or refine (shown as coloured outlines on it); null without one. */
+  verdict: null as MentorVerdict | null,
   /** Bumps on every status change. */
   version: 0,
   /** Whether the feedback service is there: null until checked. */
@@ -30,9 +34,10 @@ export const mentor = {
   /** The one-time note that photos go to the AI service has been shown. */
   privacyShown: false,
 
-  set(status: MentorStatus, text = '') {
+  set(status: MentorStatus, text = '', verdict: MentorVerdict | null = null) {
     this.status = status;
     this.text = text;
+    this.verdict = verdict;
     this.version++;
   },
 };
@@ -64,8 +69,8 @@ export async function requestFeedback(image: string, stage: number, stageLabel: 
       body: JSON.stringify({ image, stage, stageLabel }),
       signal: controller.signal,
     });
-    const body = (await response.json().catch(() => null)) as { feedback?: string; error?: string } | null;
-    if (response.ok && body?.feedback) mentor.set('done', body.feedback);
+    const body = (await response.json().catch(() => null)) as { feedback?: string; error?: string; verdict?: MentorVerdict } | null;
+    if (response.ok && body?.feedback) mentor.set('done', body.feedback, body.verdict ?? null);
     else mentor.set('error', body?.error ?? `I couldn’t get feedback this time (HTTP ${response.status}).`);
   } catch (err) {
     const timedOut = err instanceof DOMException && err.name === 'AbortError';

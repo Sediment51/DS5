@@ -53,9 +53,8 @@ const SELECT_TOUCH = 0.006;
 /** …having been lifted at least this far first. */
 const SELECT_LIFT = 0.015;
 
-const DRAW_TITLE = 'Let’s set up your workspace';
-const DRAW_DETAIL =
-  'Look at the space in front of you, below eye level. Pinch thumb and index on the table and trace your mat (at least 25 × 20 cm), then let go.';
+const DRAW_TITLE = 'Set up your workspace';
+const DRAW_DETAIL = 'Below eye level: pinch on the table and trace your mat';
 
 const cm = (m: number) => Math.round(m * 100);
 /** Let go within this of a detected table's surface (m), the mat settles flush onto it; otherwise it stays where it was let go. */
@@ -259,7 +258,7 @@ export class MatSystem implements MatControls {
     this.preview.hide();
     this.mat.setVisible(false);
     workspace.frameValid = false;
-    workspace.notify(DRAW_TITLE, DRAW_DETAIL, 'info', Infinity);
+    workspace.notify(DRAW_TITLE, 'view', 'info', Infinity, DRAW_DETAIL);
   }
 
   /** Per XR frame, before the scene renders. `time` in ms. */
@@ -303,7 +302,7 @@ export class MatSystem implements MatControls {
           this.mat.setVisible(true);
           this.mat.pulse();
           uiSound.success();
-          workspace.notify('Found your last mat', `${cm(this.mat.width)} × ${cm(this.mat.depth)} cm`, 'ok', 3);
+          workspace.notify('Mat found', 'mat', 'ok', 2);
           workspace.flow.matPlaced();
         } else if (this.restoreWaited > RESTORE_TIMEOUT) {
           this.restoreFailed();
@@ -338,7 +337,8 @@ export class MatSystem implements MatControls {
     this.stroke.reset();
     this.stroke.add(hand.pen.x, hand.pen.y, hand.pen.z);
     this.strokeView.begin();
-    workspace.notify('Tracing your mat…', 'Go all the way round, then let go.', 'info', Infinity);
+    // The preview of the mat (its size, amber or blue) is the feedback from here.
+    workspace.clear();
   }
 
   /** The rectangle the stroke so far would make, drawn as a ghost with its size. */
@@ -368,7 +368,7 @@ export class MatSystem implements MatControls {
     }
     if (this.session && this.probe.begin(this.session, space, x, penY, z)) {
       this.phase = 'settling';
-      workspace.notify('Finding the table…', '', 'info', Infinity);
+      workspace.notify('Finding the table…', 'view', 'info', Infinity);
       return;
     }
     this.place(frame, space, this.penSurface());
@@ -447,24 +447,14 @@ export class MatSystem implements MatControls {
     if (!isBigEnough(placement.width, placement.depth)) {
       this.resetToDraw();
       uiSound.alert();
-      workspace.notify(
-        `Too small: ${cm(placement.width)} × ${cm(placement.depth)} cm`,
-        'Draw at least 25 × 20 cm. Pinch and trace again.',
-        'warn',
-        Infinity,
-      );
+      workspace.notify(`Too small · ${cm(placement.width)} × ${cm(placement.depth)} cm`, 'view', 'warn', Infinity, 'Trace at least 25 × 20 cm');
       return;
     }
     this.showMat(placement, y);
     this.anchorMat(frame, space, placement.cx, y, placement.cz, placement.yaw);
     this.mat.pulse();
     uiSound.success();
-    workspace.notify(
-      `Mat placed · ${cm(placement.width)} × ${cm(placement.depth)} cm`,
-      'To move it later, make a fist on its edge.',
-      'ok',
-      4,
-    );
+    workspace.notify('Mat placed', 'mat', 'ok', 2.5);
     workspace.flow.matPlaced();
   }
 
@@ -485,12 +475,7 @@ export class MatSystem implements MatControls {
     const busy = !free.tracked || free.pinchDistance < 0.03 || !this.hands[xrPrefs.hand].tracked;
     if (this.palmUp.update(busy ? null : free.palmNormal.y, dt)) {
       workspace.panelsHidden = !workspace.panelsHidden;
-      workspace.notify(
-        workspace.panelsHidden ? 'Menus hidden' : 'Menus back',
-        workspace.panelsHidden ? `Turn your ${freeSide} palm up again to bring them back.` : '',
-        'info',
-        3,
-      );
+      workspace.notify(workspace.panelsHidden ? 'Menus hidden' : 'Menus shown', 'mat', 'info', 2);
     }
     this.pickItems();
     this.refreshHighlight(false);
@@ -530,8 +515,6 @@ export class MatSystem implements MatControls {
       this.selected = this.selected === hit ? -1 : hit;
       if (this._stepMode && this.selected >= 0) this.step = this.selected;
       uiSound.press();
-      const item = this.kit?.items[hit];
-      if (this.selected >= 0 && item) workspace.notify(item.name, item.purpose, 'ok', 3);
     }
   }
 
@@ -607,7 +590,7 @@ export class MatSystem implements MatControls {
     this.restoreWaited = 0;
     this.savedHandle = saved.handle;
     this.mat.build(saved.width, saved.depth);
-    workspace.notify('Finding your last mat…', 'Look at the table where you left it.', 'info', Infinity);
+    workspace.notify('Finding your last mat…', 'view', 'info', Infinity, 'Look at where you left it');
     session.restorePersistentAnchor(saved.handle).then(
       (anchor) => {
         if (generation !== this.generation) anchor.delete();
@@ -624,7 +607,7 @@ export class MatSystem implements MatControls {
     this.anchor?.delete();
     this.anchor = null;
     this.resetToDraw();
-    workspace.notify('Couldn’t find your last mat here', 'Pinch and trace a new one on your table.', 'warn', Infinity);
+    workspace.notify('Last mat not found', 'view', 'warn', Infinity, 'Trace a new one on your table');
   }
 
   /**

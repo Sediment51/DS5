@@ -20,6 +20,7 @@
       "purpose": "Keeps wax off your fingers and tools",
       "quantity": "A fingertip dab",
       "footprint": { "shape": "circle", "diameter": 6 },
+      "quantityVisual": { "type": "blob", "volumeMl": 0.3 },
       "stages": [2, 3]
     },
     {
@@ -30,6 +31,7 @@
       "purpose": "Builds the raised wound",
       "quantity": "Marble-sized ball",
       "footprint": { "shape": "circle", "diameter": 7 },
+      "quantityVisual": { "type": "sphere", "diameter": 1.6 },
       "stages": [2, 3]
     },
     {
@@ -90,6 +92,7 @@
       "purpose": "Fills the cut and adds drips",
       "quantity": "About ½ teaspoon",
       "footprint": { "shape": "circle", "diameter": 4.5 },
+      "quantityVisual": { "type": "blob", "volumeMl": 2.5 },
       "stages": [5]
     }
   ]

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import seedFile from '../../../public/material-mat/materials.json';
 import { parseKit } from './kit';
-import { LAYOUT, cellSize, layoutKit, type SlotLayout } from './layout';
+import { LAYOUT, cellSize, compareSize, layoutKit, type SlotLayout } from './layout';
 
 const seed = parseKit(structuredClone(seedFile));
 if (!seed.ok) throw new Error(seed.errors.join('\n'));
@@ -58,12 +58,34 @@ describe('layoutKit', () => {
     }
   });
 
-  it('keeps footprints at true scale and a quantity model beside them', () => {
+  it('keeps footprints at true scale, each in its own padded cell, with a compare spot beside them', () => {
     const withVisual = [{ footprint: { width: 0.06, depth: 0.06 }, visual: { width: 0.016, depth: 0.016 } }];
     const [slot] = layoutKit(withVisual, 0.8, 0.5).slots;
-    expect(slot.footprintX).toBeCloseTo(slot.left + 0.03, 9);
-    expect(slot.visualX - slot.footprintX).toBeCloseTo(0.03 + LAYOUT.visualGap + 0.008, 9);
+    const compare = compareSize(withVisual[0].visual);
+    expect(compare).toBeCloseTo(0.03, 9);
+    expect(slot.compare).toBeCloseTo(compare, 9);
+    expect(slot.footprintX).toBeCloseTo(slot.left + LAYOUT.pad + 0.03, 9);
+    expect(slot.visualX - slot.footprintX).toBeCloseTo(0.03 + LAYOUT.visualGap + compare / 2, 9);
     expect(slot.width).toBeCloseTo(cellSize(withVisual[0]).width, 9);
+  });
+
+  it('numbers one section per group, with a header column on the left', () => {
+    const layout = layoutKit(items, 0.8, 0.6);
+    expect(layout.sections.map((s) => [s.number, s.label])).toEqual([
+      [1, 'Prep'],
+      [2, 'Build'],
+      [3, 'Colour'],
+      [4, 'Finish'],
+    ]);
+    expect(layout.sections.map((s) => s.last)).toEqual([false, false, false, true]);
+    for (const s of layout.slots) expect(s.left).toBeGreaterThanOrEqual(layout.sections[0].left + LAYOUT.header - 1e-9);
+  });
+
+  it('has no header column without groups', () => {
+    const plain = [{ footprint: { width: 0.05, depth: 0.05 }, visual: null }];
+    const layout = layoutKit(plain, 0.4, 0.3);
+    expect(layout.sections).toEqual([]);
+    expect(layout.slots[0].left).toBeCloseTo(-cellSize(plain[0]).width / 2, 9);
   });
 
   it('flags an item bigger than the mat', () => {

@@ -1,12 +1,23 @@
 import * as THREE from 'three';
-import { BatchedText } from 'troika-three-text';
+import { BatchedText, type Text } from 'troika-three-text';
 import type { GrabState } from '../../lib/grab';
 import type { Kit } from '../lib/kit';
-import { layoutKit } from '../lib/layout';
+import { LAYOUT, layoutKit, type SectionLayout } from '../lib/layout';
 import { cornerTicks, rectPath, ribbonGeometry } from './outlines';
 import { BadgeBatch, FootprintBatch } from './slotBatches';
 import { BADGE_RADIUS, SlotView } from './SlotView';
-import { COLORS, textMaterial } from './text';
+import { COLORS, makeText, setTextOpacity, textMaterial } from './text';
+
+/** A section's header (number in a circle, group name) and the line under it, lying flat on the mat. */
+interface SectionView {
+  page: number;
+  group: THREE.Group;
+  texts: Text[];
+  circle: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
+  divider: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null;
+}
+const SECTION_CIRCLE = 0.011;
+const FLAT = -Math.PI / 2;
 
 /** Lift above the table so lines don't flicker against virtual fills. */
 const LINE_LIFT = 0.0015;
@@ -36,13 +47,14 @@ export class MatView {
   pages = 1;
   page = 0;
   private slots: SlotView[] = [];
+  private sections: SectionView[] = [];
   private readonly footprints = new FootprintBatch();
   private badges: BadgeBatch | null = null;
   private labels: BatchedText | null = null;
   private outline: THREE.Mesh | null = null;
   private ticks: THREE.Mesh | null = null;
   private readonly outlineMaterial = new THREE.MeshBasicMaterial({
-    color: COLORS.mint,
+    color: COLORS.accent,
     transparent: true,
     opacity: 0.55,
     depthWrite: false,
@@ -50,7 +62,7 @@ export class MatView {
     toneMapped: false,
   });
   private readonly tickMaterial = new THREE.MeshBasicMaterial({
-    color: COLORS.mint,
+    color: COLORS.accent,
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
@@ -62,7 +74,7 @@ export class MatView {
   /** Step mode: everything but the highlighted items is dimmed. */
   private dimOthers = false;
   private grabState: GrabState = 'none';
-  private accent = new THREE.Color(COLORS.mint);
+  private accent = new THREE.Color(COLORS.accent);
   private labelsShown = true;
   /** Seconds left of the "placed" pulse of the edge. */
   private pulseFor = 0;
@@ -132,7 +144,16 @@ export class MatView {
       depth,
     );
     layout.slots.forEach((slot, i) => this.slots[i].place(slot));
-    this.footprints.build(this.slots.map((s) => ({ shape: s.item.footprint, x: s.footprintX, z: s.footprintZ })));
+    this.footprints.build(
+      this.slots.map((s) => ({
+        shape: s.item.footprint,
+        x: s.footprintX,
+        z: s.footprintZ,
+        cell: { x: s.cellX, z: s.cellZ, width: s.cellWidth, depth: s.cellDepth },
+        compare: s.compare ? { x: s.compareX, z: s.compareZ, diameter: s.compare } : null,
+      })),
+    );
+    this.buildSections(layout.sections);
     this.pages = layout.pages;
     this.lit.clear();
     this.dimOthers = false;
@@ -142,6 +163,74 @@ export class MatView {
   setPage(page: number) {
     this.page = Math.min(Math.max(page, 0), this.pages - 1);
     this.applySlots();
+  }
+
+  /** The recipe card's sections: a numbered header in the left column and a line under each. */
+  private buildSections(layouts: readonly SectionLayout[]) {
+    for (const s of this.sections) {
+      this.overlay.remove(s.group);
+      for (const t of s.texts) t.dispose();
+      s.circle.geometry.dispose();
+      s.circle.material.dispose();
+      s.divider?.geometry.dispose();
+      s.divider?.material.dispose();
+    }
+    this.sections = layouts.map((layout) => {
+      const group = new THREE.Group();
+      const cx = layout.left + LAYOUT.header / 2;
+      const circle = new THREE.Mesh(
+        new THREE.CircleGeometry(SECTION_CIRCLE, 32),
+        new THREE.MeshBasicMaterial({ color: this.accent, transparent: true, depthWrite: false, toneMapped: false }),
+      );
+      circle.rotation.x = FLAT;
+      circle.position.set(cx, LINE_LIFT, layout.back + SECTION_CIRCLE + 0.004);
+      circle.renderOrder = 19;
+      const number = makeText(String(layout.number), { size: 0.013, weight: 'bold', color: COLORS.ink, anchorX: 'center', anchorY: 'middle', halo: false });
+      number.rotation.x = FLAT;
+      number.position.set(cx, LINE_LIFT + 0.0005, circle.position.z);
+      number.renderOrder = 21;
+      const name = makeText(layout.label.toUpperCase(), {
+        size: 0.0078,
+        weight: 'bold',
+        color: COLORS.accent,
+        anchorX: 'center',
+        anchorY: 'top',
+        maxWidth: LAYOUT.header - 0.006,
+      });
+      name.rotation.x = FLAT;
+      name.position.set(cx, LINE_LIFT, circle.position.z + SECTION_CIRCLE + 0.004);
+      name.renderOrder = 21;
+      group.add(circle, number, name);
+      let divider: SectionView['divider'] = null;
+      if (!layout.last) {
+        const z = layout.back + layout.depth + (LAYOUT.rowGap + LAYOUT.sectionGap) / 2;
+        divider = new THREE.Mesh(
+          ribbonGeometry([{ points: [layout.left, z, layout.left + layout.width, z], closed: false }], 0.0014),
+          new THREE.MeshBasicMaterial({ color: this.accent, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+        );
+        divider.position.y = LINE_LIFT;
+        divider.renderOrder = 2;
+        group.add(divider);
+      }
+      this.overlay.add(group);
+      return { page: layout.page, group, texts: [number, name], circle, divider };
+    });
+  }
+
+  private applySections() {
+    for (const s of this.sections) {
+      const shown = s.page === this.page && this.opacity > 0.002;
+      s.group.visible = shown;
+      if (!shown) continue;
+      s.circle.material.color.copy(this.accent);
+      s.circle.material.opacity = this.opacity;
+      if (s.divider) {
+        s.divider.material.color.copy(this.accent);
+        s.divider.material.opacity = 0.35 * this.opacity;
+      }
+      for (const t of s.texts) setTextOpacity(t, this.opacity);
+      (s.texts[1] as Text).color = this.accent.getHex();
+    }
   }
 
   /**
@@ -173,6 +262,7 @@ export class MatView {
     this.footprints.setColor(color);
     this.badges?.setColor(color);
     this.applyEdge();
+    this.applySections();
   }
 
   /** Shows or hides the material names and step badges (the outlines stay). */
@@ -241,6 +331,7 @@ export class MatView {
       const slot = this.slots[i];
       if (slot.alpha <= 0.002) continue;
       slot.pose(matInverse, badgeMatrix);
+      slot.animate(time);
       this.badges.setMatrix(i, badgeMatrix);
     }
     this.footprints.setTime(time);
@@ -258,5 +349,6 @@ export class MatView {
       this.footprints.setLit(i, lit);
       this.badges?.setAlpha(i, alpha);
     }
+    this.applySections();
   }
 }

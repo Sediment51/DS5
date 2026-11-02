@@ -189,7 +189,7 @@ export class SpeechBubble {
       this.dots.forEach((dot, i) => {
         dot.visible = this.stageDots !== null;
         dot.position.set((i - (this.dots.length - 1) / 2) * DOT_SPACING, -this.height / 2 + PAD + DOT_RADIUS, 0);
-        this.dotMaterials[i].color.setHex(hex(this.stageDots !== null && i < this.stageDots ? COLORS.mint : COLORS.muted));
+        this.dotMaterials[i].color.setHex(hex(this.stageDots !== null && i < this.stageDots ? COLORS.accent : COLORS.muted));
       });
       this.typed = instant ? wrapped.length : 0;
       this.shown = -1;

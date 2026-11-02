@@ -32,7 +32,7 @@ export class StrokeView {
     const geometry = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
     this.coreMaterial = new THREE.MeshBasicMaterial({ color: '#e9fbf1', transparent: true, depthWrite: false, toneMapped: false });
     this.glowMaterial = new THREE.MeshBasicMaterial({
-      color: COLORS.mint,
+      color: COLORS.accent,
       transparent: true,
       opacity: 0.35,
       depthWrite: false,

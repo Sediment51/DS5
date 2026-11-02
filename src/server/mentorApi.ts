@@ -12,6 +12,7 @@ import {
   parseMentorRequest,
   readFeedback,
   readGeminiFeedback,
+  type MentorAnswer,
   type MentorRequest,
   type MentorService,
 } from './mentorPrompt.js';
@@ -144,7 +145,7 @@ export async function answerMentor(
   }
 }
 
-type Answer = { feedback: string } | { error: string };
+type Answer = MentorAnswer;
 
 /**
  * Google Gemini's generateContent (the key goes in the query; the URL is

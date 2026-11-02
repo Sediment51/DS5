@@ -7,6 +7,7 @@ import { XREstimatedLight } from 'three/examples/jsm/webxr/XREstimatedLight.js';
 import { mentor, requestFeedback } from '../lib/mentorAnalysis';
 import { uiSound } from '../lib/uiSound';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
+import { WoundOutline } from '../lib/woundOutline';
 import { workspace } from '../lib/workspaceFlow';
 import { XRHandModel, prepareHandModel } from '../lib/xrHandModel';
 import { conformWound } from '../lib/xrWoundConform';
@@ -52,6 +53,8 @@ const SWEEP_OPACITY = 0.5;
 const WIRE_OPACITY = 0.15;
 /** Photos for mentor feedback: longest side (px). */
 const PHOTO_SIZE = 768;
+
+const scratchAxis = new THREE.Vector3();
 
 const METACARPALS = [
   'index-finger-metacarpal',
@@ -328,12 +331,13 @@ export function XRWound({ strength }: XRWoundProps) {
     );
     ring.renderOrder = 19;
     ring.visible = false;
-    return { ring, ringMaterial, ringIdle: new THREE.Color(COLORS.label), ringPinch: new THREE.Color(COLORS.mint) };
+    return { ring, ringMaterial, ringIdle: new THREE.Color(COLORS.label), ringPinch: new THREE.Color(COLORS.accent), outline: new WoundOutline() };
   }, []);
   useEffect(
     () => () => {
       extras.ring.geometry.dispose();
       extras.ringMaterial.dispose();
+      extras.outline.dispose();
     },
     [extras],
   );
@@ -363,6 +367,9 @@ export function XRWound({ strength }: XRWoundProps) {
       sweep: 0,
       seenSinceWork: false,
       lostNotice: -1,
+      tipNotice: -1,
+      mentorVersion: -1,
+      handScale: 1,
     }),
     [],
   );
@@ -391,13 +398,14 @@ export function XRWound({ strength }: XRWoundProps) {
         state.boundHand = null; // calibrate and lay the wound on afresh
         state.sweep = ALIGN_SWEEP_SECONDS;
         state.seenSinceWork = false;
-        workspace.notify('Hand tracking on', `Hold your ${xrPrefs.hand} palm up, open, in front of you.`, 'ok', 5);
+        workspace.notify(`Show your ${xrPrefs.hand} palm`, 'view', 'info', Infinity, 'Open, facing up, in front of you');
       } else if (!working && state.working) {
         state.bound = false;
         state.placed = false;
         state.lostFor = Infinity;
         if (state.lostNotice >= 0) workspace.dismiss(state.lostNotice);
         state.lostNotice = -1;
+        extras.outline.stop();
       }
       state.working = working;
     }
@@ -468,20 +476,22 @@ export function XRWound({ strength }: XRWoundProps) {
     }
     // Tracking lost while working: say what happened and how to recover; and when it's back.
     if (tracked) {
+      workspace.handPoint.copy(state.frame.point);
+      workspace.handSeen = true;
       if (state.lostNotice >= 0) {
-        workspace.notify('Tracking back', '', 'ok', 2);
+        workspace.notify('Tracking back', 'hand', 'ok', 1.5);
+        extras.outline.lost(false);
         state.lostNotice = -1;
-      }
+      } else if (!state.seenSinceWork) workspace.notify('Tracking on', 'hand', 'ok', 1.8);
       state.seenSinceWork = true;
     } else if (state.seenSinceWork && state.lostFor > LOST_NOTICE_SECONDS && state.lostNotice < 0) {
+      // Where the hand was: an amber outline pulses, with the words above it.
       uiSound.alert();
-      state.lostNotice = workspace.notify(
-        `Can’t see your ${xrPrefs.hand} hand`,
-        'Hold it up in front of the headset, palm open, and keep it in view.',
-        'warn',
-        Infinity,
-      );
+      extras.outline.lost(true);
+      state.lostNotice = workspace.notify(`${xrPrefs.hand === 'left' ? 'Left' : 'Right'} hand lost`, 'hand', 'warn', Infinity, 'Hold it in view, palm open');
     }
+    showMentorVerdict();
+    extras.outline.update(delta, tracked ? state.frame.point : null, tracked ? state.frame.quaternion : null, 1, state.placed ? 1 : 0.7);
     // Mentor feedback: the photo is taken here, inside the XR frame (the camera image is only readable now).
     if (mentor.captureRequested) {
       mentor.captureRequested = false;
@@ -520,6 +530,35 @@ export function XRWound({ strength }: XRWoundProps) {
    * the wound's place. A ring at the wound shows a pinch would count; Buddy
    * (XRBuddy) says what the stage is.
    */
+  /**
+   * Check my work, shown on the wound: a blue sweep goes round while the photo
+   * is checked; then each part of the outline is cyan (fine) or amber (refine
+   * here), with the tip in a few words above the hand.
+   */
+  function showMentorVerdict() {
+    if (state.mentorVersion === mentor.version) return;
+    state.mentorVersion = mentor.version;
+    const outline = extras.outline;
+    if (mentor.status === 'processing') {
+      outline.scan(true);
+      return;
+    }
+    outline.scan(false);
+    if (mentor.status === 'error') {
+      workspace.notify('Couldn’t check', 'hand', 'warn', 4, mentor.text);
+      return;
+    }
+    if (mentor.status !== 'done') return;
+    const verdict = mentor.verdict;
+    if (!verdict || verdict.overall === 'not_visible') {
+      workspace.notify(mentor.text, 'hand', verdict ? 'warn' : 'info', 5);
+      return;
+    }
+    outline.showVerdict(verdict.zones);
+    const refine = Object.values(verdict.zones).includes('refine');
+    workspace.notify(mentor.text, 'hand', refine ? 'warn' : 'ok', 6);
+  }
+
   function stepStages(delta: number, opacity: number) {
     const { flow, pinchPoint } = state;
     const shown = opacity > 0;
@@ -538,10 +577,11 @@ export function XRWound({ strength }: XRWoundProps) {
       near = state.placed && away < MISS_RANGE;
     }
     if (flow.update(delta, distance, inRange, near)) {
-      // A step done: say so (Buddy speaks the next one).
+      // A step done: a cyan flash round the wound, and its name (Buddy speaks the next one).
       uiSound.success();
-      if (flow.stage === 0) workspace.notify('All steps done', 'That’s the full wound. Pinch again to go through it once more.', 'ok', 4);
-      else if (flow.from > 0) workspace.notify(`Step ${flow.from} of ${STAGE_COUNT} done`, '', 'ok', 2.5);
+      extras.outline.flash();
+      if (flow.stage === 0) workspace.notify('All steps done', 'hand', 'ok', 3);
+      else if (flow.from > 0) workspace.notify(`Step ${flow.from} of ${STAGE_COUNT} done`, 'hand', 'ok', 1.8);
     }
     woundLink.otherInRange = inRange;
     const u = material.userData.uniforms;
@@ -594,6 +634,9 @@ export function XRWound({ strength }: XRWoundProps) {
       g,
     );
     if (!ok) return false;
+    // The feedback outline fits this wound, and knows which long edge is on the thumb side.
+    extras.outline.thumbSign = scratchAxis.set(1, 0, 0).applyQuaternion(state.frame.quaternion).dot(state.reader.across) >= 0 ? 1 : -1;
+    extras.outline.setSize(info!.halfWidth * handScale, info!.halfLength * handScale);
     // A new skeleton on the model's bones, so its inverses capture this exact pose.
     const old = skinned.skeleton;
     skinned.bind(new THREE.Skeleton(model.bones), skinned.matrixWorld);
@@ -607,6 +650,7 @@ export function XRWound({ strength }: XRWoundProps) {
       {hands && <primitive object={hands.right.root} />}
       {mesh && <primitive object={mesh} />}
       <primitive object={extras.ring} />
+      <primitive object={extras.outline.group} />
     </>
   );
 }

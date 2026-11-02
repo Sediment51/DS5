@@ -66,14 +66,26 @@ export class WorkspaceFlow {
 
 export type MessageTone = 'info' | 'ok' | 'warn';
 
-/** One message for the status board in front of the user. */
+/**
+ * Where a cue appears: on the thing it's about (the mat, the wound hand), or
+ * just below the view when there's nothing to put it on yet.
+ */
+export type CueAnchor = 'view' | 'mat' | 'hand';
+
+/**
+ * One cue: a few glowing words with an icon (no card), shown at what it's
+ * about. Most feedback is visual on the objects themselves; a cue names it.
+ */
 export interface WorkspaceMessage {
   id: number;
+  /** A few words: "Mat placed", "Step 2 done". */
   title: string;
+  /** Only when the picture isn't enough: one short line of how. */
   detail: string;
   tone: MessageTone;
   /** How long it shows (s), or Infinity until replaced or dismissed. */
   seconds: number;
+  at: CueAnchor;
 }
 
 /** What the menus need from the material mat (MatSystem), without importing it. */
@@ -95,7 +107,7 @@ export interface MatControls {
 
 /**
  * Shared, per-frame workspace state (read every frame; no React state):
- * the flow, where the workspace is, the status message and the mat.
+ * the flow, where the workspace is, the current cue and the mat.
  */
 export const workspace = {
   flow: new WorkspaceFlow(),
@@ -111,26 +123,41 @@ export const workspace = {
   depth: 0.35,
   /** Palm-up toggle: all panels hidden. */
   panelsHidden: false,
-  /** Where the user put Buddy, in frame space (null: its default spot). */
-  buddyLocal: null as THREE.Vector3 | null,
+  /**
+   * Where the user put Buddy, in world space (null: its spot beside the mat).
+   * Once moved it stays there, even when the mat is moved.
+   */
+  buddyWorld: null as THREE.Vector3 | null,
+  /** The wound hand's palm, last seen (for cues about the hand). */
+  handPoint: new THREE.Vector3(),
+  handSeen: false,
   /** The material mat's controls while it's running. */
   mat: null as MatControls | null,
-  message: { id: 0, title: '', detail: '', tone: 'info', seconds: 0 } as WorkspaceMessage,
+  message: { id: 0, title: '', detail: '', tone: 'info', seconds: 0, at: 'view' } as WorkspaceMessage,
 
-  /** Shows a message on the status board. Returns its id (for `dismiss`). */
-  notify(title: string, detail = '', tone: MessageTone = 'info', seconds = 4): number {
+  /**
+   * Shows a cue: a few words at what it's about. Returns its id (for `dismiss`).
+   * @param detail one short line, only when it's needed to know what to do.
+   */
+  notify(title: string, at: CueAnchor = 'view', tone: MessageTone = 'info', seconds = 2.5, detail = ''): number {
     const m = this.message;
     m.id++;
     m.title = title;
     m.detail = detail;
     m.tone = tone;
     m.seconds = seconds;
+    m.at = at;
     return m.id;
   },
 
-  /** Hides the message if it's still the one with this id. */
+  /** Hides the cue if it's still the one with this id. */
   dismiss(id: number) {
-    if (this.message.id === id) this.notify('', '', 'info', 0);
+    if (this.message.id === id) this.clear();
+  },
+
+  /** Hides any cue. */
+  clear() {
+    this.notify('', 'view', 'info', 0);
   },
 
   setFrame(matrix: THREE.Matrix4 | ArrayLike<number>, width: number, depth: number) {
@@ -145,7 +172,8 @@ export const workspace = {
   reset() {
     this.frameValid = false;
     this.panelsHidden = false;
-    this.buddyLocal = null;
-    this.notify('', '', 'info', 0);
+    this.buddyWorld = null;
+    this.handSeen = false;
+    this.clear();
   },
 };

@@ -25,7 +25,7 @@ import { STAGE_COUNT, STAGE_LABELS, woundLink } from '../lib/woundSteps';
 import { workspace, type WorkspacePhase } from '../lib/workspaceFlow';
 import { xrPrefs } from '../lib/xrPrefs';
 import { SpeechBubble } from '../lib/xrSpeechBubble';
-import { buddyHomeLocal } from './XRMenus';
+import { buddyHome } from './XRMenus';
 
 const BUDDY_URL = `${import.meta.env.BASE_URL}models/buddy_character.glb`;
 
@@ -253,7 +253,6 @@ export function XRBuddy({ active, grab }: { active: boolean; grab: GrabSystem })
       } as MotionInput,
       headTurn: new THREE.Quaternion(),
       scratch: new THREE.Vector3(),
-      frameInverse: new THREE.Matrix4(),
       bubbleSide: -1 as 1 | -1,
       bubbleAt: new THREE.Vector3(),
       bubbleGoal: new THREE.Vector3(),
@@ -302,13 +301,10 @@ export function XRBuddy({ active, grab }: { active: boolean; grab: GrabSystem })
           state.motion.place(state.carryPos);
         },
         end: () => {
+          // It stays exactly here (in the room), even if the mat is moved later.
           state.carried = false;
-          if (workspace.frameValid) {
-            state.frameInverse.copy(workspace.frame).invert();
-            workspace.buddyLocal = state.carryPos.clone().applyMatrix4(state.frameInverse);
-          }
+          workspace.buddyWorld = state.carryPos.clone();
           uiSound.release();
-          workspace.notify('Buddy will wait here', 'Make a fist on Buddy to move it again.', 'ok', 2.5);
         },
         setGrabState: (grabState) => {
           state.grabState = grabState;
@@ -486,7 +482,7 @@ export function XRBuddy({ active, grab }: { active: boolean; grab: GrabSystem })
     // Home: the middle of the view for the introduction; then its spot left of the mat (or where it was put).
     if (state.carried) input.home.copy(state.carryPos);
     else if (phase === 'intro') input.home.copy(state.introSpot);
-    else if (workspace.frameValid) buddyHomeLocal(input.home).applyMatrix4(workspace.frame);
+    else if (workspace.frameValid || workspace.buddyWorld) buddyHome(input.home);
     else input.home.copy(awaySpot());
     input.wound = working && link.placed ? link.point : null;
     input.watchWound = working && link.otherInRange;

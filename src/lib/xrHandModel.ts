@@ -216,7 +216,7 @@ export class XRHandModel {
     this.occluder = new THREE.SkinnedMesh(data.geometry, occluderMaterial);
     this.wire = new THREE.SkinnedMesh(
       data.geometry,
-      new THREE.MeshBasicMaterial({ color: '#7cf0b0', wireframe: true, transparent: true, opacity: 0.15, depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: '#7cc4ff', wireframe: true, transparent: true, opacity: 0.15, depthTest: false }),
     );
     for (const mesh of [this.occluder, this.wire]) {
       mesh.bind(skeleton, new THREE.Matrix4());
