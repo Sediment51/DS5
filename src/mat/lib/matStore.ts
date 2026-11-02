@@ -12,6 +12,8 @@ export interface SavedMat {
 
 const MAT_KEY = 'material-mat:last';
 const OPACITY_KEY = 'material-mat:opacity';
+/** Persistent anchors of forgotten mats, deleted when the next session starts. */
+const FORGET_KEY = 'material-mat:forget';
 
 export function loadSavedMat(): SavedMat | null {
   try {
@@ -68,5 +70,45 @@ export function saveOpacity(value: number) {
     localStorage.setItem(OPACITY_KEY, String(Math.round(value * 100) / 100));
   } catch {
     // ignore
+  }
+}
+
+/**
+ * Forgets the mat and its opacity (Reset demo). Its persistent anchor can
+ * only be deleted inside a session, so its handle is kept to delete next
+ * time one starts (see takeAnchorsToForget).
+ */
+export function forgetMat() {
+  try {
+    const saved = loadSavedMat();
+    if (saved) {
+      const pending = anchorsToForget();
+      if (!pending.includes(saved.handle)) pending.push(saved.handle);
+      localStorage.setItem(FORGET_KEY, JSON.stringify(pending));
+    }
+    localStorage.removeItem(MAT_KEY);
+    localStorage.removeItem(OPACITY_KEY);
+  } catch {
+    // Storage blocked: there's nothing saved to forget.
+  }
+}
+
+/** Persistent anchors still to delete (and forgets the list): call once a session has started. */
+export function takeAnchorsToForget(): string[] {
+  const handles = anchorsToForget();
+  try {
+    localStorage.removeItem(FORGET_KEY);
+  } catch {
+    // ignore
+  }
+  return handles;
+}
+
+function anchorsToForget(): string[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(FORGET_KEY) ?? '[]') as unknown;
+    return Array.isArray(value) ? value.filter((h): h is string => typeof h === 'string') : [];
+  } catch {
+    return [];
   }
 }

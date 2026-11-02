@@ -5,7 +5,7 @@ import { woundLink } from '../../lib/woundSteps';
 import { workspace, type MatControls } from '../../lib/workspaceFlow';
 import { MAT_ACCENTS, xrPrefs } from '../../lib/xrPrefs';
 import type { Kit } from '../lib/kit';
-import { clearSavedMat, loadOpacity, saveMat, saveOpacity, type SavedMat } from '../lib/matStore';
+import { clearSavedMat, loadOpacity, saveMat, saveOpacity, takeAnchorsToForget, type SavedMat } from '../lib/matStore';
 import { PalmUpToggle } from '../lib/palmUp';
 import { PinchDetector } from '../lib/pinch';
 import { fitRectangle, isBigEnough, orientToViewer, type MatPlacement } from '../lib/rectFit';
@@ -135,6 +135,8 @@ export class MatSystem implements MatControls {
   start(session: XRSession, renderer: THREE.WebGLRenderer, options: StartOptions) {
     this.session = session;
     this.renderer = renderer;
+    // Mats forgotten by Reset demo: their anchors can only be deleted now, inside a session.
+    for (const handle of takeAnchorsToForget()) void session.deletePersistentAnchor?.(handle).catch(() => {});
     if (options.kit !== this.kit) {
       this.kit = options.kit;
       this.mat.setKit(options.kit);

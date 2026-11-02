@@ -117,6 +117,11 @@ export function resetXRPrefs() {
   setXRPrefs({ ...DEFAULT_PREFS, hand: xrPrefs.hand });
 }
 
+/** Everything back to the defaults, the wound hand too (Reset demo: as for a new user). */
+export function resetAllXRPrefs() {
+  setXRPrefs({ ...DEFAULT_PREFS });
+}
+
 /** Runtime status (not saved): redraws the panels when it changes. */
 export function setAutoWorking(working: boolean) {
   if (xrPrefs.autoWorking === working) return;

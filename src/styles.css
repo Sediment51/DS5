@@ -383,6 +383,31 @@ button {
   background: transparent;
 }
 
+.xr-reset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(31, 42, 36, 0.1);
+}
+
+.xr-reset .xr-note {
+  margin: 0;
+  text-align: center;
+}
+
+.xr-reset-confirm {
+  border-color: #c98a1a;
+  color: #8a5a00;
+}
+
+.xr-reset-done {
+  margin: 0;
+  font-weight: 600;
+  color: var(--mint-strong);
+}
+
 .xr-error {
   display: flex;
   flex-direction: column;

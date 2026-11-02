@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { resetDemo } from '../lib/demoReset';
 import { loadWoundOpacity, saveWoundOpacity } from '../lib/woundOpacity';
 import { KitSummary } from '../mat/KitSummary';
 import { loadKit, type KitResult } from '../mat/lib/kit';
@@ -67,6 +68,49 @@ function QuestBrowserSteps() {
         </button>
       </details>
     </>
+  );
+}
+
+/** How long "Tap again" waits for the second tap, and how long "Demo reset" shows (ms). */
+const RESET_CONFIRM_MS = 4000;
+const RESET_DONE_MS = 5000;
+
+/**
+ * Reset demo: forgets the saved mat and the settings, so the next time you
+ * enter it starts from the very beginning (trace the mat, meet Buddy).
+ * Two taps, so it can't happen by accident.
+ */
+function ResetDemo({ onReset }: { onReset: () => void }) {
+  const [state, setState] = useState<'idle' | 'confirm' | 'done'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const timer = window.setTimeout(() => setState('idle'), state === 'confirm' ? RESET_CONFIRM_MS : RESET_DONE_MS);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  const press = () => {
+    if (state !== 'confirm') {
+      setState('confirm');
+      return;
+    }
+    resetDemo();
+    onReset();
+    setState('done');
+  };
+  return (
+    <div className="xr-reset">
+      {state === 'done' ? (
+        <p className="xr-reset-done" role="status">
+          ✓ Demo reset. Next time you enter, it starts from the beginning.
+        </p>
+      ) : (
+        <>
+          <button type="button" className={`panel button${state === 'confirm' ? ' xr-reset-confirm' : ''}`} onClick={press}>
+            {state === 'confirm' ? 'Tap again to reset' : 'Reset demo'}
+          </button>
+          <p className="xr-note">Forgets the saved mat and settings, so the next session starts from the very beginning.</p>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -276,6 +320,7 @@ export function XRView({ onExit }: XRViewProps) {
                 </button>
               )}
             </div>
+            <ResetDemo onReset={() => setWoundOpacity(1)} />
           </>
         ) : (
           <>
