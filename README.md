@@ -89,24 +89,25 @@ virtual hands in a simple room (without the material mat).
 Mixed reality introduces things one at a time (`src/lib/workspaceFlow.ts`),
 so a first visit is never everything at once:
 
-1. **Set up your workspace.** Only one instruction shows: look at the space
-   in front of you, below eye level, and pinch-trace your material mat on the
-   table. While you trace, a ghost of the mat shows its size: amber ("Keep
-   going") until it's big enough, mint ("Let go to place") once it is. When
-   it's placed, its edge pulses, a chime plays and the board says so. A mat
-   from last time is restored instead, when the headset finds it.
+1. **Set up your workspace.** Only one cue shows ("Set up your workspace":
+   pinch on the table below eye level and trace your mat). While you trace, a
+   ghost of the mat shows its size: amber ("Keep going") until it's big
+   enough, blue ("Let go to place") once it is. When it's placed, its edge
+   pulses, a chime plays and "Mat placed" shows above it. A mat from last
+   time is restored instead, when the headset finds it.
 2. **Meet Buddy.** Buddy flies into the middle of your view, introduces
    itself, then moves to its spot on the left of the mat (or tap **Got it**).
 3. **Browse.** The mat with your materials, Buddy on the left, and the menus
-   around the mat (below). No hand, no wound. Touch an item's outline or
-   label with a straight index finger to select it: its outline turns solid
-   and its purpose shows. Touch it again to let go.
-4. **Work.** Tap **Start working** (under Buddy). The board says "Hand
-   tracking on", a wireframe sweeps over your hand to show it's lined up,
-   and the wound appears on your palm. Pinch near it with the other hand to
-   step through how it's made; the materials each step uses light up on the
-   mat, and "Step 2 of 6 done" confirms each one. If the headset loses your
-   hand, the board says so and how to recover. **Pause** goes back to browsing.
+   around the mat (below). No hand, no wound. Touch an item's cell with a
+   straight index finger to select it: its outline turns solid and its
+   purpose shows (and its hologram, if it has one). Touch it again to let go.
+4. **Work.** Tap **Start working** (under Buddy). "Tracking on" shows over
+   your hand, a wireframe sweeps over it to show it's lined up, and the
+   wound appears on your palm. Pinch near it with the other hand to step
+   through how it's made: the materials each step uses light up on the mat
+   with holograms of how much to take, and each step done flashes cyan round
+   the wound. If the headset loses your hand, an amber outline pulses where
+   it was ("Left hand lost"). **Pause** goes back to browsing.
 
 Without a mat (the VR fallback) it starts at step 2, around a fixed spot in
 front of you.
@@ -114,10 +115,12 @@ front of you.
 ### Menus
 
 All menus sit around the mat, clear of the middle where you work, and use
-one style and one set of states (hover: green outline; on: green; open: ▾;
+one blue style and one set of states (hover: blue outline; on: blue; open: ▾;
 working on it: …; done: ✓; unavailable: ⚠ and greyed). Press with a
-fingertip. Every panel, and Buddy, can be carried with a fist and stays
-where you put it, relative to the mat.
+fingertip. Every panel, the mat and Buddy can be carried with a fist (it
+lights up blue while held). Until you move a panel or Buddy it travels with
+the mat; once you've put it somewhere it stays exactly there, so moving one
+thing never moves another.
 
 - **☰ Menu** (the mat's front-right corner) opens the main menu: material
   labels, Buddy and hand-mesh toggles, wound hand (Left / Right), wound
@@ -134,19 +137,25 @@ where you put it, relative to the mat.
     shows "✓ Set to 64%". The headset page has the same wound slider (live
     over Quest Link).
   - **Colour**: skin tone (**Auto** from the headset camera, six presets, a
-    fine Tone slider) and the mat's outline colour (Mint, White, Amber), with
+    fine Tone slider) and the mat's outline colour (Blue, White, Amber), with
     Reset.
 - An open menu closes after 12 s untouched; opening one closes the other.
 - **Turn the palm without the wound up** and hold it for half a second to
   hide or show all the menus.
-- **Status board:** messages float just below your view: what happened
-  (✓), what to do (i), or what went wrong and how to fix it (!).
+- **Cues, not pages:** feedback is shown on the objects themselves (outlines,
+  holograms, highlights). When words help, a cue of a few glowing words
+  with an icon (no card) appears above what it's about (the mat or your
+  hand), or just below your view: cyan ✓ done, amber ! needs attention, blue
+  i information.
 
 ### Mentor feedback ("Check my work")
 
 While working, **Check my work** (under Buddy) takes a photo through the
-headset camera and Buddy gives short feedback on the current step. While it's
-looking, Buddy shows "Let me have a look at your work…". The photo goes to the
+headset camera, and the feedback appears on the wound itself: while it's
+checking, a blue sweep goes round the wound; then an outline in five parts
+(both ends, both long edges, the middle) turns cyan where the work is fine
+and pulses amber where it needs refining, with a tip of a few words above
+your hand ("Blend the wrist end smoother"). Buddy just reacts. The photo goes to the
 app's own dev server (`/api/mentor`), which asks the AI service; the API key
 stays on the laptop.
 
@@ -242,10 +251,16 @@ fallback.
    pinch, and a ghost of the mat shows its size as you go. Anything under
    25 × 20 cm is refused with a prompt to redraw.
 3. The mat appears on the rectangle, locked to the table (it stays put as
-   you walk around). Items run left to right in step order, one row per
-   group (Prep, Build, Colour, Finish), from the back of the mat to the
-   front. Labels lie flat in front of each outline, tilted up towards you.
-   On a small mat they're split into pages.
+   you walk around). It's laid out like a recipe card: a numbered section
+   per group of the workflow (1 Prep, 2 Build, 3 Colour, 4 Finish), from
+   the back of the mat to the front, each with its number in a column on
+   the left and a line under it. Every material has its own outlined cell:
+   its true-size outline, a dashed "compare" spot where the amount matters,
+   and a label lying flat on the mat (the amount large, then the name, then
+   the steps it's used in). When a material is needed (its step is on, or
+   you select it), a blue hologram of how much to take sits on its compare
+   spot: put your real wax, jelly or blood in the same spot to compare. On a
+   small mat the sections are split into pages.
 4. **Controls** (see Menus above): the **Materials** chip turns pages or
    steps through items (step mode highlights one item, shows its purpose
    and dims the rest); **Appearance → Opacity → Mat** fades the overlay so
@@ -311,7 +326,7 @@ Each item:
 | `footprint` | True size in cm: `{ "shape": "circle", "diameter": 6 }`, `{ "shape": "rect", "width": 12, "depth": 7 }` or `{ "shape": "pill", "length": 15, "width": 2 }` (rects and pills run left to right) |
 | `group` (optional) | Related items share a group (`"Prep"`, `"Build"`, …); each group starts a new row |
 | `stages` (optional) | The build steps (1–6) the item is used in, e.g. `[2, 3]`: they light up on the mat during those steps |
-| `quantityVisual` (optional) | A true-scale model of the amount, beside the outline: `{ "type": "sphere", "diameter": 1.6 }`, `{ "type": "blob", "volumeMl": 2.5 }` (a dome of that volume) or `{ "type": "drops", "count": 3 }`, each with an optional `"color": "#rrggbb"` |
+| `quantityVisual` (optional) | The amount to take, shown as a true-scale hologram on a compare spot beside the outline while it's needed: `{ "type": "sphere", "diameter": 1.6 }`, `{ "type": "blob", "volumeMl": 2.5 }` (a dome of that volume) or `{ "type": "drops", "count": 3 }` (an optional `"color"` is accepted but holograms are always blue) |
 
 The seed footprints are typical product sizes; measure your own items and
 adjust them. Up to 64 items.
@@ -359,8 +374,9 @@ reuses preallocated objects throughout.
 | Pinch hysteresis, stroke buffer, rectangle fit, table choice, layout, poke, palm-up | `src/mat/lib/*.ts` (unit tested) |
 | Kit loading and checking | `src/mat/lib/kit.ts` |
 | Mat, slots, batches, tracing preview, stroke | `src/mat/xr/MatView.ts`, `SlotView.ts`, `slotBatches.ts`, `MatPreview.ts`, `StrokeView.ts` |
-| Workspace phases, shared state, status messages | `src/lib/workspaceFlow.ts` (unit tested) |
-| Menus, chips, Opacity / Colour panels, Buddy's actions, status board | `src/components/XRMenus.tsx` |
+| Workspace phases, shared state, cues | `src/lib/workspaceFlow.ts` (unit tested) |
+| Menus, chips, Opacity / Colour panels, Buddy's actions, cues | `src/components/XRMenus.tsx` |
+| Feedback outline on the wound (verdict, scan, step done, hand lost) | `src/lib/woundOutline.ts` |
 | Panel kit: fingertip presses, sliders, the pointing gate, placement around the mat; the shared look and states | `src/lib/xrPanel.ts`, `src/lib/xrPanelStyle.ts` |
 | Mentor feedback: client, dev-server endpoint, prompt | `src/lib/mentorAnalysis.ts`, `src/server/mentorApi.ts`, `src/server/mentorPrompt.ts` (unit tested) |
 
@@ -368,8 +384,8 @@ Limits: with no Space Setup there are no planes, and hit test may find
 nothing, so the table height comes from your pinch (within about a
 centimetre). Anchors and persistent anchors depend on the browser; without
 them the mat still appears but can drift slightly, and isn't restored next
-time. Labels lie at a fixed 30° tilt towards the front of the mat, so they
-read best from where you sat when you traced it.
+time. Labels lie flat on the mat, facing its front edge, so they read best
+from where you sat when you traced it.
 
 ## How it works
 

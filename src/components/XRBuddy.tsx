@@ -37,7 +37,6 @@ export const BUDDY_LINES = {
   paused: 'Paused. Tap Start working to carry on.',
   closer: 'Pinch a little closer to the wound.',
   done: 'You did it! That’s the full wound.',
-  checking: 'Let me have a look at your work…',
 };
 
 /** Idle_Float's weight: the only animation that always plays, kept gentle. */
@@ -524,20 +523,16 @@ export function XRBuddy({ active, grab }: { active: boolean; grab: GrabSystem })
       sayPassing(BUDDY_LINES.closer);
     }
 
-    // Feedback on your work.
+    // Feedback on your work: shown on the wound itself (coloured outlines and a few words);
+    // Buddy only reacts, so there's nothing extra to read.
     if (state.mentorVersion !== mentor.version) {
       state.mentorVersion = mentor.version;
-      if (mentor.status === 'processing') {
-        react('thinking', 60);
-        say(BUDDY_LINES.checking, null, 'thinking');
-      } else if (mentor.status === 'done') {
-        react('happy', 2);
-        play(r, 'Nod_Yes');
-        say(mentor.text, null, 'cheerful');
-      } else if (mentor.status === 'error') {
-        react('confused', 2);
-        say(mentor.text, null, null);
-      }
+      if (mentor.status === 'processing') react('thinking', 60);
+      else if (mentor.status === 'done') {
+        const refine = mentor.verdict ? Object.values(mentor.verdict.zones).includes('refine') : false;
+        react(refine ? 'determined' : 'love', 2);
+        play(r, refine ? 'Nod_Yes' : 'Happy_Bounce');
+      } else if (mentor.status === 'error') react('confused', 2);
     }
 
     // Move.
