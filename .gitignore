@@ -3,3 +3,6 @@ dist
 *.tsbuildinfo
 sample-clip-frames
 .env*.local
+
+.vercel
+.env*
